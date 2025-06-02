@@ -207,7 +207,7 @@ class CarState(CarStateBase, EsccCarStateBase, MadsCarState, CarStateExt):
         self.lda_button_frames += 1
       else:
         self.lda_button_frames = 0
-      self.lda_button = 1 if self.lda_button_frames >= 2 else 0
+      self.lda_button = 1 if self.lda_button_frames >= 3 else 0
 
     ret.buttonEvents = [*create_button_events(self.cruise_buttons[-1], prev_cruise_buttons, BUTTONS_DICT),
                         *create_button_events(self.main_buttons[-1], prev_main_buttons, {1: ButtonType.mainCruise}),
