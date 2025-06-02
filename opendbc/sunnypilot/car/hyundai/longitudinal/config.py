@@ -58,6 +58,14 @@ CAR_SPECIFIC_CONFIGS = {
     lookahead_jerk_lower_v=[0.025, 0.037, 0.05],
     jerk_limits=2.0,
   ),
+  CAR.KIA_EV6: CarTuningConfig(
+    stopping_decel_rate=0.7,
+    v_ego_stopping=0.2,
+    lookahead_jerk_bp=[2., 5., 20.],
+    lookahead_jerk_upper_v=[0.25, 0.5, 1.0],
+    lookahead_jerk_lower_v=[0.05, 0.10, 0.3],
+    jerk_limits=2.0,
+  ),
   CAR.HYUNDAI_IONIQ: CarTuningConfig(
     jerk_limits=4.5,
   )
