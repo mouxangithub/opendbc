@@ -254,8 +254,8 @@ class LongitudinalController:
       self.comfort_band_lower = 0.0
       return
 
-    self.comfort_band_upper = JERK_THRESHOLD
-    self.comfort_band_lower = 0.05
+    self.comfort_band_upper = 0.035
+    self.comfort_band_lower = 0.03
 
   def get_tuning_state(self) -> None:
     """Update the tuning state object with current control values.
