@@ -13,7 +13,7 @@ from opendbc.car.interfaces import CarStateBase
 from opendbc.car.hyundai.values import CarControllerParams
 from opendbc.sunnypilot.car import get_param
 from opendbc.sunnypilot.car.hyundai.longitudinal.helpers import get_car_config, jerk_limited_integrator, ramp_update, \
-                                                                JERK_THRESHOLD, LongitudinalTuningType
+                                                                LongitudinalTuningType
 
 LongCtrlState = structs.CarControl.Actuators.LongControlState
 
@@ -103,12 +103,12 @@ class LongitudinalController:
 
     # Upper jerk limit varies based on speed and control state
     if long_control_state == LongCtrlState.pid:
-      upper_limit = float(np.interp(velocity, [0.0, 5.0, 20.0], [1.6, 1.3, 1.2]))
+      upper_limit = float(np.interp(velocity, [0.0, 5.0, 20.0], [1.5, 1.3, 1.2]))
     else:
       upper_limit = 0.5  # Default for non-PID states
 
     # Lower jerk limit varies based on speed
-    lower_limit = float(np.interp(velocity, [0.0, 5.0, 20.0], [3.5, 3.0, 2.5]))
+    lower_limit = float(np.interp(velocity, [0.0, 5.0, 20.0], [3.0, 3.0, 2.5]))
 
     return upper_limit, lower_limit
 
@@ -210,7 +210,7 @@ class LongitudinalController:
     if self.long_tuning_param == LongitudinalTuningType.PREDICTIVE:
       self.jerk_lower = desired_jerk_lower
     elif self.long_tuning_param == LongitudinalTuningType.DYNAMIC:
-      self.jerk_lower = ramp_update(self.jerk_lower, dynamic_desired_lower_jerk)
+      self.jerk_lower = dynamic_desired_lower_jerk
 
     # Disable jerk when longitudinal control is inactive
     if not CC.longActive:
@@ -255,7 +255,7 @@ class LongitudinalController:
       return
 
     self.comfort_band_upper = 0.035
-    self.comfort_band_lower = 0.03
+    self.comfort_band_lower = 0.01
 
   def get_tuning_state(self) -> None:
     """Update the tuning state object with current control values.
