@@ -54,15 +54,15 @@ TUNING_CONFIGS = {
 # Car-specific configs
 CAR_SPECIFIC_CONFIGS = {
   CAR.KIA_NIRO_EV: CarTuningConfig(
-    stopping_decel_rate=0.15,
-    v_ego_stopping=0.1,
+    stopping_decel_rate=0.30,
+    v_ego_stopping=0.125,
     lookahead_jerk_bp=[2., 5., 20.],
     lookahead_jerk_upper_v=[0.5, 0.75, 1.0],
     lookahead_jerk_lower_v=[0.05, 0.1, 0.3],
     jerk_limits=2.0,
     upper_jerk_v=[1.0, 1.0, 1.0],
     lower_jerk_v=[2.0, 2.0, 2.5],
-    min_jerk=1.0
+    min_jerk=0.75
   ),
   CAR.KIA_EV6: CarTuningConfig(
     stopping_decel_rate=0.7,
