@@ -106,11 +106,11 @@ class CarController(CarControllerBase):
           else:
             self.lkas_req_prepare = 1
 
-      elif self.lat_safeoff:
-        if self.apply_torque_last == 0:
-          self.lat_safeoff = 0
-        apply_torque = apply_driver_steer_torque_limits(0, self.apply_torque_last,
-                                                          CS.out.steeringTorque, CarControllerParams)
+      # elif self.lat_safeoff:
+      #   if self.apply_torque_last == 0:
+      #     self.lat_safeoff = 0
+      #   apply_torque = apply_driver_steer_torque_limits(0, self.apply_torque_last,
+      #                                                     CS.out.steeringTorque, CarControllerParams)
 
       else:
         self.lkas_req_prepare = 0
