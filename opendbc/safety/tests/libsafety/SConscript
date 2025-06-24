@@ -52,6 +52,16 @@ if GetOption('ubsan'):
 safety = env.SharedObject("safety.os", "safety.c")
 libsafety = env.SharedLibrary("libsafety.so", [safety])
 
+coverage_flags = [
+  # GCC coverage flags
+  '-fprofile-arcs',
+  '-ftest-coverage',
+]
+env.Append(
+  CFLAGS=coverage_flags,
+  LINKFLAGS=coverage_flags,
+)
+
 if GetOption('coverage'):
   env.Append(
     CFLAGS=["-fprofile-arcs", "-ftest-coverage", "-fprofile-abs-path",],
