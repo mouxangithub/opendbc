@@ -28,6 +28,7 @@ non_tested_cars = [
   VOLKSWAGEN.VOLKSWAGEN_CRAFTER_MK2,  # need a route from an ACC-equipped Crafter
   SUBARU.SUBARU_FORESTER_HYBRID,
   TESLA.TESLA_MODEL_3,
+  TOYOTA.TOYOTA_WILDLANDER,
   BYD.BYD_HAN_DM_20, #byd routes to be added later with official device
   BYD.BYD_HAN_EV_20,
   BYD.BYD_QIN_PLUS_DMI_23,
