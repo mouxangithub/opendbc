@@ -30,6 +30,8 @@ class CarState(CarStateBase, CarStateExt):
     ret.vEgoRaw = cp.vl["ESP_Status"]["ESP_Vehicle_Speed"] * CV.KPH_TO_MS
     ret.vEgo, ret.aEgo = self.update_speed_kf(ret.vEgoRaw)
     ret.standstill = abs(ret.vEgoRaw) < 0.01
+    conversion = CV.KPH_TO_MS if cp_adas.vl["Cluster"]["Cluster_Unit"] == 0 else CV.MPH_TO_MS
+    ret.vEgoCluster = cp_adas.vl["Cluster"]["Cluster_VehicleSpeed"] * conversion
 
     # Gas pedal
     pedal_status = cp.vl["VDM_PropStatus"]["VDM_AcceleratorPedalPosition"]
@@ -121,6 +123,7 @@ class CarState(CarStateBase, CarStateExt):
     adas_messages = [
       ("IndicatorLights", 10),
       ("ACM_tsrCmd", 10),
+      ("Cluster", 10),
     ]
 
     messages_ext = CarStateExt.get_parser(CP, CP_SP)
