@@ -29,6 +29,7 @@ non_tested_cars = [
   SUBARU.SUBARU_FORESTER_HYBRID,
   TESLA.TESLA_MODEL_3,
   TOYOTA.TOYOTA_WILDLANDER,
+  TESLA.TESLA_MODEL_Y,
   BYD.BYD_HAN_DM_20, #byd routes to be added later with official device
   BYD.BYD_HAN_EV_20,
   BYD.BYD_QIN_PLUS_DMI_23,
