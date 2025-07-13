@@ -202,7 +202,11 @@ class CarInterfaceBase(ABC):
 
   @staticmethod
   def init(CP: structs.CarParams, CP_SP: structs.CarParamsSP, can_recv: CanRecvCallable, can_send: CanSendCallable):
-    pass
+    """Used to disable longitudinal ECUs as needed"""
+
+  @staticmethod
+  def deinit(CP: structs.CarParams, can_recv: CanRecvCallable, can_send: CanSendCallable):
+    """Used to re-enable longitudinal ECUs as needed"""
 
   @staticmethod
   def get_steer_feedforward_default(desired_angle, v_ego):
