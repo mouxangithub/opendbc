@@ -239,7 +239,8 @@ class CarState(CarStateBase):
       ret.cruiseState.speedCluster = cluster_set_speed * conversion_factor
 
     if self.CP.carFingerprint in TSS2_CAR and not self.CP.flags & ToyotaFlags.DISABLE_RADAR.value:
-      self.acc_type = cp_acc.vl["ACC_CONTROL"]["ACC_TYPE"]
+      if not (self.CP.flags & ToyotaFlags.SMART_DSU.value):
+        self.acc_type = cp_acc.vl["ACC_CONTROL"]["ACC_TYPE"]
       ret.stockFcw = bool(cp_acc.vl["PCS_HUD"]["FCW"])
 
     # some TSS2 cars have low speed lockout permanently set, so ignore on those cars
@@ -274,7 +275,7 @@ class CarState(CarStateBase):
     if self.CP.carFingerprint in (TSS2_CAR - RADAR_ACC_CAR):
       # distance button is wired to the ACC module (camera or radar)
       prev_distance_button = self.distance_button
-      if self.CP.carFingerprint in (SECOC_CAR) and "PCM_CRUISE_4" in cp.vl and isinstance(cp.vl["PCM_CRUISE_4"], dict):
+      if self.CP.carFingerprint in (SECOC_CAR):
         self.distance_button = cp.vl["PCM_CRUISE_4"]["DISTANCE"]
       else:
         self.distance_button = cp_acc.vl["ACC_CONTROL"]["DISTANCE"]
@@ -458,7 +459,7 @@ class CarState(CarStateBase):
         ("GEAR_PACKET_HYBRID", 60),
         ("SECOC_SYNCHRONIZATION", 10),
         ("GAS_PEDAL", 42),
-        # ("PCM_CRUISE_4", 1),
+        ("PCM_CRUISE_4", 1),
       ]
     else:
       pt_messages.append(("VSC1S07", 20))
@@ -481,8 +482,11 @@ class CarState(CarStateBase):
     if CP.carFingerprint in RADAR_ACC_CAR and not CP.flags & ToyotaFlags.DISABLE_RADAR.value:
       pt_messages += [
         ("PCS_HUD", 1),
-        ("ACC_CONTROL", 33),
       ]
+      if not CP.flags & ToyotaFlags.SMART_DSU.value:
+        pt_messages += [
+          ("ACC_CONTROL", 33),
+        ]
 
     if CP.carFingerprint not in (TSS2_CAR - RADAR_ACC_CAR) and not CP.enableDsu and not CP.flags & ToyotaFlags.DISABLE_RADAR.value:
       pt_messages += [

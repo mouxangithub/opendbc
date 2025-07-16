@@ -47,13 +47,13 @@ def get_long_tune(CP, params):
       if CP.carFingerprint == CAR.TOYOTA_RAV4_TSS2:
         #optimal for rav4
         kiBP = [0.,  5.,   12.,  20.,  27.,  40.]
-        kiV = [.35,  .25,  .20,  .17,  .10,  .101]
+        kiV = [.35,  .24,  .20,  .17,  .10,  .101]
       else:
         #optimal for corolla
         #kiBP = [0.,  5.,  12.,  20.,  27.,  40.]
         #kiV = [.35, .23,  .20,  .17, .10,  .10]
-        kiBP = [0.,   5.,  12.,  20.,  27.,  40.]
-        kiV = [.35,  .25,  .20,  .17,  .10,  .101]
+        kiBP = [0.,   3.,   8.,   12.,  20.,  27.,  40.]
+        kiV = [.35,  .312,  .22,  .207,  .17,  .10,  .101]
     else:
       kiBP = [2., 5.]
       kiV = [0.5, 0.25]
@@ -84,7 +84,8 @@ class CarController(CarControllerBase, SecOCLongCarController):
     # *** start long control state ***
     self.long_pid = get_long_tune(self.CP, self.params)
     self.aego = FirstOrderFilter(0.0, 0.25, DT_CTRL * 3)
-    self.pitch = FirstOrderFilter(0, 0.5, DT_CTRL)
+    self.pitch = FirstOrderFilter(0, 0.25, DT_CTRL)
+    self.pitch_slow = FirstOrderFilter(0, 1.0, DT_CTRL)
 
     self.accel = 0
     self.prev_accel = 0
@@ -120,6 +121,7 @@ class CarController(CarControllerBase, SecOCLongCarController):
 
     if len(CC.orientationNED) == 3:
       self.pitch.update(CC.orientationNED[1])
+      self.pitch_slow.update(CC.orientationNED[1])
 
     # *** control msgs ***
     can_sends = []
@@ -265,6 +267,10 @@ class CarController(CarControllerBase, SecOCLongCarController):
                                                speed=CS.out.vEgo,
                                                feedforward=pcm_accel_cmd,
                                                freeze_integrator=actuators.longControlState != LongCtrlState.pid)
+          # compensate for changes in pitch
+          high_pass_pitch = self.pitch.x - self.pitch_slow.x
+          pitch_compensation = math.sin(high_pass_pitch) * ACCELERATION_DUE_TO_GRAVITY
+          pcm_accel_cmd += pitch_compensation
         else:
           self.long_pid.reset()
 
