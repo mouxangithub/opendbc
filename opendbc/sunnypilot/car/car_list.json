@@ -3419,7 +3419,7 @@
     "package": "All"
   },
   "Toyota Wildlander PHEV 2021-23": {
-    "platform": "TOYOTA_WILDLANDER",
+    "platform": "TOYOTA_WILDLANDER_PHEV",
     "make": "Toyota",
     "brand": "toyota",
     "model": "Wildlander PHEV",
