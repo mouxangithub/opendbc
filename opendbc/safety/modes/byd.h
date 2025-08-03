@@ -27,19 +27,19 @@ typedef enum {
 } BydPlatform;
 static BydPlatform byd_platform;
 
-static void byd_rx_hook(const CANPacket_t *to_push) {
-  int bus = GET_BUS(to_push);
-  int addr = GET_ADDR(to_push);
+static void byd_rx_hook(const CANPacket_t *msg) {
+  int bus = msg->bus;
+  int addr = msg->addr;
   if (bus == BYD_CANBUS_ESC) {
     if (addr == BYD_CANADDR_PEDAL) {
-      gas_pressed = (GET_BYTE(to_push, 0) != 0U);
-      brake_pressed = (GET_BYTE(to_push, 1) != 0U);
+      gas_pressed = (msg->data[0] != 0U);
+      brake_pressed = (msg->data[1] != 0U);
     } else if (addr == BYD_CANADDR_CARSPEED) {
-      int speed_raw = (((GET_BYTE(to_push, 1) & 0x0FU) << 8) | GET_BYTE(to_push, 0));
+      int speed_raw = (((msg->data[1] & 0x0FU) << 8) | msg->data[0]);
       vehicle_moving = (speed_raw != 0);
     } else if (addr == BYD_CANADDR_ACC_EPS_STATE) {
-      byd_eps_cruiseactivated = GET_BIT(to_push, 1U) != 0U; // CruiseActivated
-      int torque_motor = (((GET_BYTE(to_push, 2) & 0x0FU) << 8) | GET_BYTE(to_push, 1)); // MainTorque
+      byd_eps_cruiseactivated = GET_BIT(msg, 1U) != 0U; // CruiseActivated
+      int torque_motor = (((msg->data[2] & 0x0FU) << 8) | msg->data[1]); // MainTorque
       if ( torque_motor >= 2048 )
         torque_motor -= 4096;
       update_sample(&torque_meas, torque_motor);
@@ -49,7 +49,7 @@ static void byd_rx_hook(const CANPacket_t *to_push) {
     }
   } else if (bus == BYD_CANBUS_MPC) {
     if (addr == BYD_CANADDR_ACC_HUD_ADAS) {
-      unsigned int accstate = ((GET_BYTE(to_push, 2) >> 3) & 0x07U);
+      unsigned int accstate = ((msg->data[2] >> 3) & 0x07U);
       bool cruise_engaged = (accstate == 3U) || (accstate == 5U); // 3=acc_active, 5=user force accel
       pcm_cruise_check(cruise_engaged);
     }
@@ -60,7 +60,7 @@ static void byd_rx_hook(const CANPacket_t *to_push) {
 }
 
 
-static bool byd_tx_hook(const CANPacket_t *to_send) {
+static bool byd_tx_hook(const CANPacket_t *msg) {
   const TorqueSteeringLimits HAN_DMEV_STEERING_LIMITS = {
     .max_torque = 300,
     .max_rate_up = 17,
@@ -103,13 +103,13 @@ static bool byd_tx_hook(const CANPacket_t *to_send) {
   };
 
   bool tx = true;
-  int bus = GET_BUS(to_send);
+  int bus = msg->bus;
 
   if (bus == BYD_CANBUS_ESC) {
-    int addr = GET_ADDR(to_send);
+    int addr = msg->addr;
     if (addr == BYD_CANADDR_ACC_MPC_STATE) {
-      int desired_torque = ((GET_BYTE(to_send, 3) & 0x07U) << 8U) | GET_BYTE(to_send, 2);
-      bool steer_req = GET_BIT(to_send, 28U) && byd_eps_cruiseactivated; //LKAS_Active
+      int desired_torque = ((msg->data[3] & 0x07U) << 8U) | msg->data[2];
+      bool steer_req = GET_BIT(msg, 28U) && byd_eps_cruiseactivated; //LKAS_Active
       if ( desired_torque >= 1024 )
         desired_torque -= 2048;
       const TorqueSteeringLimits limits = (byd_platform == HAN_TANG_DMEV) ? HAN_DMEV_STEERING_LIMITS :
