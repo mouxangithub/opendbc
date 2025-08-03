@@ -159,7 +159,7 @@ class CarState(CarStateBase):
         # Update the previous profile to prevent unnecessary re-syncing
         self.prev_accel_profile = self.accel_profile
 
-      if self.CP.carFingerprint != CAR.TOYOTA_MIRAI:
+      if not(self.CP.flags & ToyotaFlags.SECOC.value) and self.CP.carFingerprint != CAR.TOYOTA_MIRAI:
         ret.engineRpm = cp.vl["ENGINE_RPM"]["RPM"]
 
     ret.wheelSpeeds = self.get_wheel_speeds(
@@ -171,7 +171,8 @@ class CarState(CarStateBase):
     ret.vEgoRaw = float(np.mean([ret.wheelSpeeds.fl, ret.wheelSpeeds.fr, ret.wheelSpeeds.rl, ret.wheelSpeeds.rr]))
     ret.vEgo, ret.aEgo = self.update_speed_kf(ret.vEgoRaw)
     ret.vEgoCluster = ret.vEgo * 1.015  # minimum of all the cars
-    ret.yawRate = float(cp.vl["KINEMATICS"]["YAW_RATE"] * CV.DEG_TO_RAD)
+    if not(self.CP.flags & ToyotaFlags.SECOC.value):
+      ret.yawRate = float(cp.vl["KINEMATICS"]["YAW_RATE"] * CV.DEG_TO_RAD)
 
     ret.standstill = abs(ret.vEgoRaw) < 1e-3
 
@@ -268,10 +269,12 @@ class CarState(CarStateBase):
     if self.CP.carFingerprint in (TSS2_CAR - RADAR_ACC_CAR):
       # distance button is wired to the ACC module (camera or radar)
       prev_distance_button = self.distance_button
-      if self.CP.carFingerprint in (SECOC_CAR):
+      if self.CP.carFingerprint in (SECOC_CAR - RADAR_ACC_CAR) and self.CP.carFingerprint != CAR.TOYOTA_WILDLANDER_PHEV:
         self.distance_button = cp.vl["PCM_CRUISE_4"]["DISTANCE"]
-      else:
+      elif self.CP.carFingerprint in (TSS2_CAR - RADAR_ACC_CAR):
         self.distance_button = cp_acc.vl["ACC_CONTROL"]["DISTANCE"]
+      else:
+        self.distance_button = cp.vl["SDSU"]["FD_BUTTON"]
 
       ret.buttonEvents = create_button_events(self.distance_button, prev_distance_button, {1: ButtonType.gapAdjustCruise})
 
@@ -429,7 +432,6 @@ class CarState(CarStateBase):
       ("PCM_CRUISE", 33),
       ("PCM_CRUISE_SM", 1),
       ("STEER_TORQUE_SENSOR", 50),
-      ("KINEMATICS", 80),
     ]
 
     if CP.flags & ToyotaFlags.SECOC.value:
@@ -437,8 +439,9 @@ class CarState(CarStateBase):
         ("GEAR_PACKET_HYBRID", 60),
         ("SECOC_SYNCHRONIZATION", 10),
         ("GAS_PEDAL", 42),
-        ("PCM_CRUISE_4", 1),
       ]
+      if CP.carFingerprint not in RADAR_ACC_CAR and CP.carFingerprint  != CAR.TOYOTA_WILDLANDER_PHEV:
+        pt_messages.append(("PCM_CRUISE_4", 1))
     else:
       pt_messages.append(("VSC1S07", 20))
       if CP.carFingerprint not in [CAR.TOYOTA_MIRAI]:
@@ -446,6 +449,7 @@ class CarState(CarStateBase):
 
       pt_messages += [
         ("GEAR_PACKET", 1),
+        ("KINEMATICS", 80),
       ]
 
     if CP.carFingerprint in UNSUPPORTED_DSU_CAR:

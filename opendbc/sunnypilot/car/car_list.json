@@ -3505,6 +3505,30 @@
     ],
     "package": "All"
   },
+  "Toyota Wildlander PHEV 2021-23": {
+    "platform": "TOYOTA_WILDLANDER_PHEV",
+    "make": "Toyota",
+    "brand": "toyota",
+    "model": "Wildlander PHEV",
+    "year": [
+      "2021",
+      "2022",
+      "2023"
+    ],
+    "package": "All"
+  },
+  "Toyota Wildlander Prime 2021-23": {
+    "platform": "TOYOTA_WILDLANDER_PHEV",
+    "make": "Toyota",
+    "brand": "toyota",
+    "model": "Wildlander Prime",
+    "year": [
+      "2021",
+      "2022",
+      "2023"
+    ],
+    "package": "All"
+  },
   "Toyota Sienna 2018-20": {
     "platform": "TOYOTA_SIENNA",
     "make": "Toyota",
