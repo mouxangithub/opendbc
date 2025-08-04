@@ -149,6 +149,10 @@ class CarInterface(CarInterfaceBase):
       bool(ret.flags & ToyotaFlags.DISABLE_RADAR.value) or \
       sdsu_active
 
+    if Params().get_bool("ToyotaStockLongitudinal"):
+      ret.openpilotLongitudinalControl = False
+      ret.alphaLongitudinalAvailable = False
+
     ret.autoResumeSng = ret.openpilotLongitudinalControl and candidate in NO_STOP_TIMER_CAR
 
     if not ret.openpilotLongitudinalControl:
@@ -167,7 +171,7 @@ class CarInterface(CarInterfaceBase):
       if candidate == CAR.TOYOTA_RAV4_TSS2:
         ret.stoppingDecelRate = 0.03 if sp_tss2_long_tune else 0.3   # reach stopping target smoothly
       else:
-        ret.stoppingDecelRate = 0.004 if sp_tss2_long_tune else 0.3  # reach stopping target smoothly
+        ret.stoppingDecelRate = 0.003 if sp_tss2_long_tune else 0.3  # reach stopping target smoothly
 
       # Hybrids have much quicker longitudinal actuator response
       if ret.flags & ToyotaFlags.HYBRID.value:
@@ -187,7 +191,7 @@ class CarInterface(CarInterfaceBase):
       ret.flags |= ToyotaFlagsSP.SP_ENHANCED_BSM.value
     if candidate == CAR.TOYOTA_PRIUS_TSS2:
       ret.flags |= ToyotaFlagsSP.SP_NEED_DEBUG_BSM.value
-    if sp_toyota_auto_brake_hold and candidate in (TSS2_CAR - RADAR_ACC_CAR - SECOC_CAR):
+    if sp_toyota_auto_brake_hold and candidate in (TSS2_CAR - RADAR_ACC_CAR - SECOC_CAR) and (stock_cp.flags & ToyotaFlags.HYBRID.value):
       ret.flags |= ToyotaFlagsSP.SP_AUTO_BRAKE_HOLD.value
 
 
