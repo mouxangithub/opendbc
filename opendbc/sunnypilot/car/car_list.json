@@ -2565,6 +2565,30 @@
     ],
     "package": "ProPILOT Assist"
   },
+  "Proton S70": {
+    "platform": "Proton S70",
+    "make": "Proton",
+    "brand": "proton",
+    "model": "S70",
+    "year": [],
+    "package": "All"
+  },
+  "Proton X50": {
+    "platform": "Proton X50",
+    "make": "Proton",
+    "brand": "proton",
+    "model": "X50",
+    "year": [],
+    "package": "All"
+  },
+  "Proton X90": {
+    "platform": "Proton X90",
+    "make": "Proton",
+    "brand": "proton",
+    "model": "X90",
+    "year": [],
+    "package": "All"
+  },
   "Ram 1500 2019-24": {
     "platform": "RAM_1500_5TH_GEN",
     "make": "Ram",
