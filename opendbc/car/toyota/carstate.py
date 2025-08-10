@@ -51,6 +51,7 @@ class CarState(CarStateBase):
     self.angle_offset = FirstOrderFilter(None, 60.0, DT_CTRL, initialized=False)
     self._init_traffic_signals()
 
+    self.lkas_button = 0
     self.distance_button = 0
 
     self.pcm_follow_distance = 0
@@ -271,8 +272,24 @@ class CarState(CarStateBase):
         self.distance_button = cp_acc.vl["ACC_CONTROL"]["DISTANCE"]
       else:
         self.distance_button = cp.vl["SDSU"]["FD_BUTTON"]
+    buttonEvents = []
+    if self.CP.carFingerprint in TSS2_CAR:
+      # lkas button is wired to the camera
+      prev_lkas_button = self.lkas_button
+      self.lkas_button = cp_cam.vl["LKAS_HUD"]["LDA_ON_MESSAGE"]
 
-      ret.buttonEvents = create_button_events(self.distance_button, prev_distance_button, {1: ButtonType.gapAdjustCruise})
+      # Cycles between 1 and 2 when pressing the button, then rests back at 0 after ~3s
+      if self.lkas_button != 0 and self.lkas_button != prev_lkas_button:
+        buttonEvents.extend(create_button_events(1, 0, {1: ButtonType.lkas}) +
+                            create_button_events(0, 1, {1: ButtonType.lkas}))
+
+      if self.CP.carFingerprint not in RADAR_ACC_CAR:
+        # distance button is wired to the ACC module (camera or radar)
+        prev_distance_button = self.distance_button
+        self.distance_button = cp_acc.vl["ACC_CONTROL"]["DISTANCE"]
+
+        buttonEvents += create_button_events(self.distance_button, prev_distance_button, {1: ButtonType.gapAdjustCruise})
+    ret.buttonEvents = buttonEvents
 
     if self.CP_SP.flags & ToyotaFlagsSP.SP_ENHANCED_BSM and self.frame > 199:
       ret.leftBlindspot, ret.rightBlindspot = self.sp_get_enhanced_bsm(cp)
