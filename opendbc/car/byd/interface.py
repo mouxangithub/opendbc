@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 from math import exp
 
-from opendbc.car import FRICTION_THRESHOLD, get_safety_config, get_friction, structs
+from opendbc.car import get_safety_config, structs
+from opendbc.car.lateral import FRICTION_THRESHOLD, get_friction
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.interfaces import CarInterfaceBase, TorqueFromLateralAccelCallbackType, LatControlInputs
 from opendbc.car.byd.values import CAR, CanBus, BydSafetyFlags, MPC_ACC_CAR, TORQUE_LAT_CAR, EXP_LONG_CAR, \

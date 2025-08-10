@@ -1,6 +1,7 @@
 import numpy as np
 from opendbc.can.packer import CANPacker
-from opendbc.car import Bus, apply_driver_steer_torque_limits, structs
+from opendbc.car import Bus, structs
+from opendbc.car.lateral import apply_driver_steer_torque_limits
 from opendbc.car.interfaces import CarControllerBase
 from opendbc.car.byd import bydcan
 from opendbc.car.byd.values import CarControllerParams
