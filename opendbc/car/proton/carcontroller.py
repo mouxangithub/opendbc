@@ -2,7 +2,8 @@ from opendbc.can.packer import CANPacker
 from opendbc.car.interfaces import CarControllerBase
 from opendbc.car.proton.protoncan import create_steering_control, send_buttons
 from opendbc.car.proton.values import CarControllerParams
-from opendbc.car import Bus, apply_driver_steer_torque_limits
+from opendbc.car import Bus
+from opendbc.car.lateral import apply_driver_steer_torque_limits
 
 class CarController(CarControllerBase):
   def __init__(self, dbc_names, CP, CP_SP):
