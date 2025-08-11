@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from opendbc.car.interfaces import RadarInterfaceBase
-from opendbc.car import Bus, structs
-from opendbc.can.parser import CANParser
+from opendbc.car import Bus, structs, CANParser
 from opendbc.car.byd.values import DBC, CanBus
 
 class RadarInterface(RadarInterfaceBase):
@@ -21,7 +20,7 @@ class RadarInterface(RadarInterfaceBase):
     if self.rcp is None:
       return super().update(None)
 
-    values = self.rcp.update_strings(can_strings)
+    values = self.rcp.update(can_strings)
     self.updated_messages.update(values)
 
     if self.trigger_msg not in self.updated_messages:

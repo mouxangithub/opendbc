@@ -1,3 +1,4 @@
+import os
 import copy
 import numpy as np
 
@@ -15,7 +16,6 @@ from opendbc.car import Bus, create_button_events, structs
 from opendbc.car.interfaces import CarStateBase
 from opendbc.car.byd.values import DBC, CanBus, LKASConfig, CarControllerParams
 
-import os
 BYD_RADAR = os.getenv("BYD_RADAR") is not None
 
 ButtonType = structs.CarState.ButtonEvent.Type

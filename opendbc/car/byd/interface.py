@@ -3,8 +3,8 @@ from math import exp
 
 from opendbc.car import get_safety_config, structs
 from opendbc.car.common.conversions import Conversions as CV
-from opendbc.car.interfaces import CarInterfaceBase, TorqueFromLateralAccelCallbackType, LatControlInputs
 from opendbc.car.lateral import FRICTION_THRESHOLD, get_friction
+from opendbc.car.interfaces import CarInterfaceBase, TorqueFromLateralAccelCallbackType, LatControlInputs
 from opendbc.car.byd.values import CAR, CanBus, BydSafetyFlags, MPC_ACC_CAR, TORQUE_LAT_CAR, EXP_LONG_CAR, \
                                 PLATFORM_HANTANG_DMEV, PLATFORM_TANG_DMI, PLATFORM_SONG_PLUS_DMI, PLATFORM_QIN_PLUS_DMI, PLATFORM_YUAN_PLUS_DMI_ATTO3
 from opendbc.car.byd.carcontroller import CarController

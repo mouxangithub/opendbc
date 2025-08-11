@@ -355,7 +355,7 @@ static bool toyota_tx_hook(const CANPacket_t *msg) {
       }
     }
     // SP: auto brake hold https://github.com/AlexandreSato
-    if ((msg->addr == 0x344) && (alternative_experience & ALT_EXP_ALLOW_AEB)) {
+    if ((msg->addr == 0x344U) && (alternative_experience & ALT_EXP_ALLOW_AEB)) {
       if (vehicle_moving || gas_pressed || !acc_main_on) {
         tx = false;
       }
@@ -381,7 +381,7 @@ static bool toyota_tx_hook(const CANPacket_t *msg) {
                           (GET_BYTES(msg, 4, 4) == 0x00008000U));       // lock
 
     if (invalid_uds_msg && !sp_valid_uds_msgs) {
-      tx = 0;
+      tx = false;
     }
   }
 
