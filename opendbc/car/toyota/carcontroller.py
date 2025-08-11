@@ -1,8 +1,8 @@
 import math
 import numpy as np
 from openpilot.common.params import Params
-from opendbc.car import Bus, apply_meas_steer_torque_limits, apply_std_steer_angle_limits, common_fault_avoidance, \
-                        make_tester_present_msg, rate_limit, structs, ACCELERATION_DUE_TO_GRAVITY, DT_CTRL
+from opendbc.car import Bus, make_tester_present_msg, rate_limit, structs, ACCELERATION_DUE_TO_GRAVITY, DT_CTRL
+from opendbc.car.lateral import apply_meas_steer_torque_limits, apply_std_steer_angle_limits, common_fault_avoidance
 from opendbc.car.can_definitions import CanData
 from opendbc.car.carlog import carlog
 from opendbc.car.common.filter_simple import FirstOrderFilter
@@ -13,7 +13,7 @@ from opendbc.car.toyota import toyotacan
 from opendbc.car.toyota.values import CAR, STATIC_DSU_MSGS, NO_STOP_TIMER_CAR, TSS2_CAR, \
                                         CarControllerParams, ToyotaFlags, \
                                         UNSUPPORTED_DSU_CAR
-from opendbc.can.packer import CANPacker
+from opendbc.can import CANPacker
 from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP
 
 from opendbc.sunnypilot.car.toyota.secoc_long import SecOCLongCarController
@@ -46,12 +46,12 @@ def get_long_tune(CP, params):
     if Params().get_bool("ToyotaTSS2Long"):
       if CP.carFingerprint == CAR.TOYOTA_RAV4_TSS2:
         #optimal for rav4
-        kiBP = [0.,  5.,   8.3,   12.,  20.,  27.,  40.]
-        kiV = [.35,  .235,  .23,  .21,  .17,  .10,  .101]
+        kiBP = [0.,  2.,   12.,  20.,  27.]
+        kiV = [.34,  .35,  .20,  .17,  .10]
       else:
         #optimal for corolla
-        kiBP = [0.,  2.,  12.,  27.,  40.]
-        kiV = [.35,  .34, .21,  .10,  .10]
+        kiBP = [0.,  2.,  12.,  27.,  40]
+        kiV = [.34,  .35, .20,  .0995,  .0995]
         #kiBP = [0.,   3.,   8.,   12.,  20.,  27.,  40.]
         #kiV = [.35,  .3085,  .234,  .213,  .17,  .10,  .101]
     else:

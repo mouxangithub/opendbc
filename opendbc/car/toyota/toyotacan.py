@@ -152,6 +152,17 @@ def create_ui_command(packer, steer, chime, left_line, right_line, left_lane_dep
 
   return packer.make_can_msg("LKAS_HUD", 0, values)
 
+
+def toyota_checksum(address: int, sig, d: bytearray) -> int:
+  s = len(d)
+  addr = address
+  while addr:
+    s += addr & 0xFF
+    addr >>= 8
+  for i in range(len(d) - 1):
+    s += d[i]
+  return s & 0xFF
+
 def create_set_bsm_debug_mode(lr_blindspot, enabled):
   dat = b"\x02\x10\x60\x00\x00\x00\x00" if enabled else b"\x02\x10\x01\x00\x00\x00\x00"
   dat = lr_blindspot + dat

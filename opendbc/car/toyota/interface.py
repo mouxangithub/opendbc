@@ -150,6 +150,10 @@ class CarInterface(CarInterfaceBase):
       ret.openpilotLongitudinalControl = False
       ret.alphaLongitudinalAvailable = False
 
+    if Params().get_bool("ToyotaStockLongitudinal"):
+      ret.openpilotLongitudinalControl = False
+      ret.alphaLongitudinalAvailable = False
+
     ret.autoResumeSng = ret.openpilotLongitudinalControl and candidate in NO_STOP_TIMER_CAR
 
     if not ret.openpilotLongitudinalControl:
@@ -188,15 +192,22 @@ class CarInterface(CarInterfaceBase):
       ret.flags |= ToyotaFlagsSP.SP_ENHANCED_BSM.value
     if candidate == CAR.TOYOTA_PRIUS_TSS2:
       ret.flags |= ToyotaFlagsSP.SP_NEED_DEBUG_BSM.value
-    if sp_toyota_auto_brake_hold and candidate in (TSS2_CAR - RADAR_ACC_CAR - SECOC_CAR) and (ret.flags & ToyotaFlags.HYBRID.value):
+    if sp_toyota_auto_brake_hold and candidate in (TSS2_CAR - RADAR_ACC_CAR - SECOC_CAR):
       ret.flags |= ToyotaFlagsSP.SP_AUTO_BRAKE_HOLD.value
 
 
     return ret
 
   @staticmethod
-  def init(CP, CP_SP, can_recv, can_send):
+  def init(CP, CP_SP, can_recv, can_send, communication_control=None):
     # disable radar if alpha longitudinal toggled on radar-ACC car
     if CP.flags & ToyotaFlags.DISABLE_RADAR.value:
-      communication_control = bytes([uds.SERVICE_TYPE.COMMUNICATION_CONTROL, uds.CONTROL_TYPE.ENABLE_RX_DISABLE_TX, uds.MESSAGE_TYPE.NORMAL])
+      if communication_control is None:
+        communication_control = bytes([uds.SERVICE_TYPE.COMMUNICATION_CONTROL, uds.CONTROL_TYPE.ENABLE_RX_DISABLE_TX, uds.MESSAGE_TYPE.NORMAL])
       disable_ecu(can_recv, can_send, bus=0, addr=0x750, sub_addr=0xf, com_cont_req=communication_control)
+
+  @staticmethod
+  def deinit(CP, can_recv, can_send):
+    # re-enable radar if alpha longitudinal toggled on radar-ACC car
+    communication_control = bytes([uds.SERVICE_TYPE.COMMUNICATION_CONTROL, uds.CONTROL_TYPE.ENABLE_RX_ENABLE_TX, uds.MESSAGE_TYPE.NORMAL])
+    CarInterface.init(CP, can_recv, can_send, communication_control)
