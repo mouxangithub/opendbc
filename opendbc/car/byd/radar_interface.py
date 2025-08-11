@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from opendbc.car.interfaces import RadarInterfaceBase
-from opendbc.car import Bus, structs, CANParser
+from opendbc.car import Bus, structs
+from opendbc.can import CANParser
 from opendbc.car.byd.values import DBC, CanBus
 
 class RadarInterface(RadarInterfaceBase):
