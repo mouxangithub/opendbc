@@ -1,6 +1,6 @@
 import numpy as np
 from opendbc.car import structs
-from opendbc.car.byd.values import  CanBus, CarControllerParams
+from opendbc.car.byd.values import CanBus, CarControllerParams
 
 GearShifter = structs.CarState.GearShifter
 VisualAlert = structs.CarControl.HUDControl.VisualAlert

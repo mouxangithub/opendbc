@@ -88,14 +88,8 @@ class CarState(CarStateBase):
       cp.vl["WHEEL_SPEEDS"]["WHEEL_SPEED_RR"],
     )
     ret.vEgoCluster = ret.vEgo * 1.015  # minimum of all the cars
-    # ret.yawRate = float(cp.vl["KINEMATICS"]["YAW_RATE"] * CV.DEG_TO_RAD)
-    # 检查两层嵌套键存在性
-    if "KINEMATICS" in cp.vl and isinstance(cp.vl["KINEMATICS"], dict):
-      if "YAW_RATE" in cp.vl["KINEMATICS"]:
-        yaw_value = cp.vl["KINEMATICS"]["YAW_RATE"]
-        # 确保值有效（非None且可转浮点）
-        if yaw_value is not None:
-            ret.yawRate = float(yaw_value * CV.DEG_TO_RAD)
+    if not self.CP.flags & ToyotaFlags.SECOC.value:
+      ret.yawRate = float(cp.vl["KINEMATICS"]["YAW_RATE"] * CV.DEG_TO_RAD)
 
     ret.standstill = abs(ret.vEgoRaw) < 1e-3
 
@@ -214,60 +208,6 @@ class CarState(CarStateBase):
     pt_messages = [
       ("BLINKERS_STATE", float('nan')),
     ]
-
-    if CP.flags & ToyotaFlags.SECOC.value:
-      pt_messages += [
-        ("GEAR_PACKET_HYBRID", 60),
-        ("SECOC_SYNCHRONIZATION", 10),
-        ("GAS_PEDAL", 42),
-      ]
-    else:
-      pt_messages.append(("VSC1S07", 20))
-      if CP.carFingerprint not in [CAR.TOYOTA_MIRAI]:
-        pt_messages.append(("ENGINE_RPM", 42))
-
-      pt_messages += [
-        ("GEAR_PACKET", 1),
-        ("KINEMATICS", 80),
-      ]
-
-    if CP.carFingerprint in UNSUPPORTED_DSU_CAR:
-      pt_messages.append(("DSU_CRUISE", 5))
-      pt_messages.append(("PCM_CRUISE_ALT", 1))
-    else:
-      pt_messages.append(("PCM_CRUISE_2", 33))
-
-    if CP.enableBsm:
-      pt_messages.append(("BSM", 1))
-
-    if CP.carFingerprint in RADAR_ACC_CAR and not CP.flags & ToyotaFlags.DISABLE_RADAR.value:
-      pt_messages += [
-        ("PCS_HUD", 1),
-        ("ACC_CONTROL", 33),
-      ]
-
-    if CP.carFingerprint not in (TSS2_CAR - RADAR_ACC_CAR) and not CP.enableDsu and not CP.flags & ToyotaFlags.DISABLE_RADAR.value:
-      pt_messages += [
-        ("PRE_COLLISION", 33),
-      ]
-
-    cam_messages = []
-    if CP.carFingerprint != CAR.TOYOTA_PRIUS_V:
-      cam_messages += [
-        ("LKAS_HUD", 1),
-      ]
-
-    if CP.carFingerprint in (TSS2_CAR - RADAR_ACC_CAR):
-      cam_messages += [
-        ("ACC_CONTROL", 33),
-        ("PCS_HUD", 1),
-      ]
-
-      # TODO: Figure out new layout of the PRE_COLLISION message
-      if not CP.flags & ToyotaFlags.SECOC.value:
-        cam_messages += [
-          ("PRE_COLLISION", 33),
-        ]
 
     return {
       Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], pt_messages, 0),
