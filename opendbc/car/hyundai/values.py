@@ -253,7 +253,7 @@ class CAR(Platforms):
     flags=HyundaiFlags.CLUSTER_GEARS | HyundaiFlags.ALT_LIMITS,
   )
   HYUNDAI_KONA_2022 = HyundaiPlatformConfig(
-    [HyundaiCarDocs("Hyundai Kona 2022", car_parts=CarParts.common([CarHarness.hyundai_o]))],
+    [HyundaiCarDocs("Hyundai Kona 2022-23", car_parts=CarParts.common([CarHarness.hyundai_o]))],
     CarSpecs(mass=1491, wheelbase=2.6, steerRatio=13.42, tireStiffnessFactor=0.385),
     flags=HyundaiFlags.CAMERA_SCC | HyundaiFlags.ALT_LIMITS_2,
   )
@@ -597,6 +597,20 @@ class CAR(Platforms):
     [HyundaiCarDocs("Genesis GV80 2023", "All", car_parts=CarParts.common([CarHarness.hyundai_m]))],
     CarSpecs(mass=2258, wheelbase=2.95, steerRatio=14.14),
     flags=HyundaiFlags.RADAR_SCC,
+  )
+
+  # port extensions
+  HYUNDAI_KONA_EV_NON_SCC = HyundaiPlatformConfig(
+    [HyundaiCarDocs("Hyundai Kona Electric Non-SCC 2019", "No Smart Cruise Control (Non-SCC)", car_parts=CarParts.common([CarHarness.hyundai_g]))],
+    HYUNDAI_KONA_EV.specs,
+    flags=HyundaiFlags.EV | HyundaiFlags.ALT_LIMITS,
+    sp_flags=HyundaiFlagsSP.NON_SCC,
+  )
+  KIA_CEED_PHEV_2022_NON_SCC = HyundaiPlatformConfig(
+    [HyundaiCarDocs("Kia Ceed Plug-in Hybrid Non-SCC 2022", "No Smart Cruise Control (Non-SCC)", car_parts=CarParts.common([CarHarness.hyundai_i]))],
+    CarSpecs(mass=1650, wheelbase=2.65, steerRatio=13.75, tireStiffnessFactor=0.5),
+    flags=HyundaiFlags.HYBRID,
+    sp_flags=HyundaiFlagsSP.NON_SCC,
   )
 
 
