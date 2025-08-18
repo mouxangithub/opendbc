@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from cereal import car
 from opendbc.car import get_safety_config, structs
-from openpilot.selfdrive.car import get_safety_config
 from opendbc.car.interfaces import CarInterfaceBase
 from opendbc.car.proton.values import CAR
 
