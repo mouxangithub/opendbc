@@ -161,6 +161,10 @@ class CarInterface(CarInterfaceBase):
       ret.openpilotLongitudinalControl = False
       ret.alphaLongitudinalAvailable = False
 
+    if Params().get_bool("ToyotaStockLongitudinal"):
+      ret.openpilotLongitudinalControl = False
+      ret.alphaLongitudinalAvailable = False
+
     ret.autoResumeSng = ret.openpilotLongitudinalControl and candidate in NO_STOP_TIMER_CAR
 
     if not ret.openpilotLongitudinalControl:
@@ -179,7 +183,7 @@ class CarInterface(CarInterfaceBase):
       if candidate == CAR.TOYOTA_RAV4_TSS2:
         ret.stoppingDecelRate = 0.03 if sp_tss2_long_tune else 0.3   # reach stopping target smoothly
       else:
-        ret.stoppingDecelRate = 0.002 if sp_tss2_long_tune else 0.3  # reach stopping target smoothly
+        ret.stoppingDecelRate = 0.001 if sp_tss2_long_tune else 0.3  # reach stopping target smoothly
 
       # Hybrids have much quicker longitudinal actuator response
       if ret.flags & ToyotaFlags.HYBRID.value:
