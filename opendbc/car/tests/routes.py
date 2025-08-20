@@ -41,6 +41,17 @@ non_tested_cars = [
   # port extensions
   HYUNDAI.KIA_CEED_PHEV_2022_NON_SCC,
   HYUNDAI.HYUNDAI_KONA_EV_NON_SCC,
+
+  BYD.BYD_HAN_DM_20, #byd routes to be added later with official device
+  BYD.BYD_HAN_EV_20,
+  BYD.BYD_QIN_PLUS_DMI_23,
+  BYD.BYD_SONG_PLUS_DMI_21,
+  BYD.BYD_SONG_PLUS_DMI_22,
+  BYD.BYD_SONG_PLUS_DMI_23,
+  BYD.BYD_SONG_PRO_DMI_22,
+  BYD.BYD_TANG_DM,
+  BYD.BYD_TANG_DMI_21,
+  BYD.BYD_YUAN_PLUS_DMI_22
 ]
 
 

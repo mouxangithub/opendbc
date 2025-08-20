@@ -2,7 +2,6 @@
 from math import exp
 
 from opendbc.car import get_safety_config, structs
-from opendbc.car.lateral import FRICTION_THRESHOLD, get_friction
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.interfaces import CarInterfaceBase, TorqueFromLateralAccelCallbackType, LatControlInputs
 from opendbc.car.byd.values import CAR, CanBus, BydSafetyFlags, MPC_ACC_CAR, TORQUE_LAT_CAR, EXP_LONG_CAR, \
@@ -30,8 +29,7 @@ class CarInterface(CarInterfaceBase):
     RadarInterface = RadarInterface
 
     def torque_from_lateral_accel_siglin(self, latcontrol_inputs: LatControlInputs, torque_params: structs.CarParams.LateralTorqueTuning,
-                                    lateral_accel_error: float, lateral_accel_deadzone: float, friction_compensation: bool, gravity_adjusted: bool) -> float:
-        friction = get_friction(lateral_accel_error, lateral_accel_deadzone, FRICTION_THRESHOLD, torque_params, friction_compensation)
+                                         gravity_adjusted: bool) -> float:
 
         def sig(val):
             # https://timvieira.github.io/blog/post/2014/02/11/exp-normalize-trick
@@ -48,7 +46,7 @@ class CarInterface(CarInterfaceBase):
         assert non_linear_torque_params, "The params are not defined"
         a, b, c = non_linear_torque_params
         steer_torque = (sig(latcontrol_inputs.lateral_acceleration * a) * b) + (latcontrol_inputs.lateral_acceleration * c)
-        return float(steer_torque) + friction
+        return float(steer_torque)
 
     def torque_from_lateral_accel(self) -> TorqueFromLateralAccelCallbackType:
         if self.CP.carFingerprint in NON_LINEAR_TORQUE_PARAMS:

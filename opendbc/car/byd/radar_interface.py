@@ -21,7 +21,7 @@ class RadarInterface(RadarInterfaceBase):
     if self.rcp is None:
       return super().update(None)
 
-    values = self.rcp.update(can_strings)
+    values = self.rcp.update_strings(can_strings)
     self.updated_messages.update(values)
 
     if self.trigger_msg not in self.updated_messages:
