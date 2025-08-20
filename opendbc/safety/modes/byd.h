@@ -33,7 +33,7 @@ static void byd_rx_hook(const CANPacket_t *msg) {
   if (bus == BYD_CANBUS_ESC) {
     if (addr == BYD_CANADDR_PEDAL) {
       gas_pressed = (msg->data[0] != 0U);
-      brake_pressed = (msg->data[1] != 0U);
+      brake_pressed = (msg->data[1]!= 0U);
     } else if (addr == BYD_CANADDR_CARSPEED) {
       int speed_raw = (((msg->data[1] & 0x0FU) << 8) | msg->data[0]);
       vehicle_moving = (speed_raw != 0);
