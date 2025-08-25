@@ -10,6 +10,7 @@ from opendbc.car.interfaces import CarControllerBase
 
 from opendbc.sunnypilot.car.hyundai.escc import EsccCarController
 from opendbc.sunnypilot.car.hyundai.longitudinal.controller import LongitudinalController
+from opendbc.sunnypilot.car.hyundai.lead_data_ext import LeadDataCarController
 from opendbc.sunnypilot.car.hyundai.mads import MadsCarController
 
 VisualAlert = structs.CarControl.HUDControl.VisualAlert
@@ -46,11 +47,12 @@ def process_hud_alert(enabled, fingerprint, hud_control):
   return sys_warning, sys_state, left_lane_warning, right_lane_warning
 
 
-class CarController(CarControllerBase, EsccCarController, LongitudinalController, MadsCarController):
+class CarController(CarControllerBase, EsccCarController, LeadDataCarController, LongitudinalController, MadsCarController):
   def __init__(self, dbc_names, CP, CP_SP):
     CarControllerBase.__init__(self, dbc_names, CP, CP_SP)
     EsccCarController.__init__(self, CP, CP_SP)
     MadsCarController.__init__(self)
+    LeadDataCarController.__init__(self, CP)
     LongitudinalController.__init__(self, CP, CP_SP)
     self.CAN = CanBus(CP)
     self.params = CarControllerParams(CP)
@@ -64,12 +66,17 @@ class CarController(CarControllerBase, EsccCarController, LongitudinalController
 
   def update(self, CC, CC_SP, CS, now_nanos):
     EsccCarController.update(self, CS)
+    LeadDataCarController.update(self, CC_SP, CC, CS)
     MadsCarController.update(self, self.CP, CC, CC_SP, self.frame)
     if self.frame % 2 == 0:
       LongitudinalController.update(self, CC, CS)
 
     actuators = CC.actuators
     hud_control = CC.hudControl
+
+    # update dynamic toruqe limits
+    if self.params.DYNAMIC_MAX_TORQUE:
+      self.params.update_dynamic_torque(CS.out.vEgoRaw)
 
     # steering torque
     new_torque = int(round(actuators.torque * self.params.STEER_MAX))
@@ -182,7 +189,8 @@ class CarController(CarControllerBase, EsccCarController, LongitudinalController
     lka_steering_long = lka_steering and self.CP.openpilotLongitudinalControl
 
     # steering control
-    can_sends.extend(hyundaicanfd.create_steering_messages(self.packer, self.CP, self.CAN, CC.enabled, apply_steer_req, apply_torque, self.lkas_icon))
+    can_sends.extend(hyundaicanfd.create_steering_messages(self.packer, self.CP, self.CAN, CC.enabled, apply_steer_req,
+                                                           apply_torque, self.lkas_icon, CS.out.vEgoRaw))
 
     # prevent LFA from activating on LKA steering cars by sending "no lane lines detected" to ADAS ECU
     if self.frame % 5 == 0 and lka_steering:
@@ -192,6 +200,9 @@ class CarController(CarControllerBase, EsccCarController, LongitudinalController
     # LFA and HDA icons
     if self.frame % 5 == 0 and (not lka_steering or lka_steering_long):
       can_sends.append(hyundaicanfd.create_lfahda_cluster(self.packer, self.CAN, CC.enabled, self.lfa_icon))
+      can_sends.append(hyundaicanfd.create_hda2_cluster(self.packer, self.CAN, self.lfa_icon,
+                                                        CC.leftBlinker, CC.rightBlinker, CC.hudControl,
+                                                        self.lead_data, CS.out))
 
     # blinkers
     if lka_steering and self.CP.flags & HyundaiFlags.ENABLE_BLINKERS:
@@ -203,8 +214,8 @@ class CarController(CarControllerBase, EsccCarController, LongitudinalController
       else:
         can_sends.extend(hyundaicanfd.create_fca_warning_light(self.packer, self.CAN, self.frame))
       if self.frame % 2 == 0:
-        can_sends.append(hyundaicanfd.create_acc_control(self.packer, self.CAN, CC.enabled, self.accel_last, accel, stopping, CC.cruiseControl.override,
-                                                         set_speed_in_units, hud_control, CS.main_cruise_enabled, self.tuning))
+        can_sends.append(hyundaicanfd.create_acc_control(self.packer, self.CAN, CC.enabled, self.accel_last, accel, CC.cruiseControl.override,
+                                                         set_speed_in_units, hud_control, self.lead_data, CS.main_cruise_enabled, self.tuning))
         self.accel_last = accel
     else:
       # button presses

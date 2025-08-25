@@ -37,6 +37,7 @@ class CarState(CarStateBase, EsccCarStateBase, MadsCarState, CarStateExt):
     self.cruise_buttons: deque = deque([Buttons.NONE] * PREV_BUTTON_SAMPLES, maxlen=PREV_BUTTON_SAMPLES)
     self.main_buttons: deque = deque([Buttons.NONE] * PREV_BUTTON_SAMPLES, maxlen=PREV_BUTTON_SAMPLES)
     self.lda_button = 0
+    self.custom_button = 0
 
     self.gear_msg_canfd = "ACCELERATOR" if CP.flags & HyundaiFlags.EV else \
                           "GEAR_ALT" if CP.flags & HyundaiFlags.CANFD_ALT_GEARS else \
@@ -193,14 +194,18 @@ class CarState(CarStateBase, EsccCarStateBase, MadsCarState, CarStateExt):
     prev_cruise_buttons = self.cruise_buttons[-1]
     prev_main_buttons = self.main_buttons[-1]
     prev_lda_button = self.lda_button
+    prev_custom_button = self.custom_button
     self.cruise_buttons.extend(cp.vl_all["CLU11"]["CF_Clu_CruiseSwState"])
     self.main_buttons.extend(cp.vl_all["CLU11"]["CF_Clu_CruiseSwMain"])
     if self.CP.flags & HyundaiFlags.HAS_LDA_BUTTON:
       self.lda_button = cp.vl["BCM_PO_11"]["LDA_BTN"]
+    if self.CP_SP.flags & HyundaiFlagsSP.HAS_CUSTOM_BUTTON:
+      self.custom_button = cp.vl["STEERING_WHEEL_MEDIA_BUTTONS"]["CUSTOM_BUTTON"]
 
     ret.buttonEvents = [*create_button_events(self.cruise_buttons[-1], prev_cruise_buttons, BUTTONS_DICT),
                         *create_button_events(self.main_buttons[-1], prev_main_buttons, {1: ButtonType.mainCruise}),
-                        *create_button_events(self.lda_button, prev_lda_button, {1: ButtonType.lkas})]
+                        *create_button_events(self.lda_button, prev_lda_button, {1: ButtonType.lkas}),
+                        *create_button_events(self.custom_button, prev_custom_button, {1: ButtonType.altButton2})]
 
     if self.CP.openpilotLongitudinalControl:
       ret.cruiseState.available = self.get_main_cruise(ret)
@@ -252,7 +257,7 @@ class CarState(CarStateBase, EsccCarStateBase, MadsCarState, CarStateExt):
                      cp.vl["WHEEL_SPEEDS"]["WHL_SpdRLVal"] <= STANDSTILL_THRESHOLD and cp.vl["WHEEL_SPEEDS"]["WHL_SpdRRVal"] <= STANDSTILL_THRESHOLD
 
     ret.steeringRateDeg = cp.vl["STEERING_SENSORS"]["STEERING_RATE"]
-    ret.steeringAngleDeg = cp.vl["STEERING_SENSORS"]["STEERING_ANGLE"]
+    ret.steeringAngleDeg = cp.vl["MDPS"]["STEERING_ANGLE_2"]
     ret.steeringTorque = cp.vl["MDPS"]["STEERING_COL_TORQUE"]
     ret.steeringTorqueEps = cp.vl["MDPS"]["STEERING_OUT_TORQUE"]
     ret.steeringPressed = self.update_steering_pressed(abs(ret.steeringTorque) > self.params.STEER_THRESHOLD, 5)
@@ -292,9 +297,12 @@ class CarState(CarStateBase, EsccCarStateBase, MadsCarState, CarStateExt):
     prev_cruise_buttons = self.cruise_buttons[-1]
     prev_main_buttons = self.main_buttons[-1]
     prev_lda_button = self.lda_button
+    prev_custom_button = self.custom_button
     self.cruise_buttons.extend(cp.vl_all[self.cruise_btns_msg_canfd]["CRUISE_BUTTONS"])
     self.main_buttons.extend(cp.vl_all[self.cruise_btns_msg_canfd]["ADAPTIVE_CRUISE_MAIN_BTN"])
     self.lda_button = cp.vl[self.cruise_btns_msg_canfd]["LDA_BTN"]
+    if self.CP_SP.flags & HyundaiFlagsSP.HAS_CUSTOM_BUTTON:
+      self.custom_button = cp.vl["STEERING_WHEEL_MEDIA_BUTTONS"]["CUSTOM_BUTTON"]
     self.buttons_counter = cp.vl[self.cruise_btns_msg_canfd]["COUNTER"]
     ret.accFaulted = cp.vl["TCS"]["ACCEnable"] != 0  # 0 ACC CONTROL ENABLED, 1-3 ACC CONTROL DISABLED
 
@@ -306,7 +314,8 @@ class CarState(CarStateBase, EsccCarStateBase, MadsCarState, CarStateExt):
 
     ret.buttonEvents = [*create_button_events(self.cruise_buttons[-1], prev_cruise_buttons, BUTTONS_DICT),
                         *create_button_events(self.main_buttons[-1], prev_main_buttons, {1: ButtonType.mainCruise}),
-                        *create_button_events(self.lda_button, prev_lda_button, {1: ButtonType.lkas})]
+                        *create_button_events(self.lda_button, prev_lda_button, {1: ButtonType.lkas}),
+                        *create_button_events(self.custom_button, prev_custom_button, {1: ButtonType.altButton2})]
 
     if self.CP.openpilotLongitudinalControl:
       ret.cruiseState.available = self.get_main_cruise(ret)
@@ -325,9 +334,16 @@ class CarState(CarStateBase, EsccCarStateBase, MadsCarState, CarStateExt):
         # this message is 50Hz but the ECU frequently stops transmitting for ~0.5s
         ("CRUISE_BUTTONS", 1)
       ]
+
+    cam_messages = []
+    if CP.flags & HyundaiFlags.CANFD_CAMERA_SCC:
+      cam_messages += [
+        ("FR_CMR_03_50ms", 20),
+      ]
+
     return {
       Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], msgs, CanBus(CP).ECAN),
-      Bus.cam: CANParser(DBC[CP.carFingerprint][Bus.pt], [], CanBus(CP).CAM),
+      Bus.cam: CANParser(DBC[CP.carFingerprint][Bus.pt], cam_messages, CanBus(CP).CAM),
     }
 
   def get_can_parsers(self, CP, CP_SP):
