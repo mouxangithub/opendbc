@@ -92,7 +92,7 @@ class CarInterface(CarInterfaceBase):
 
     elif candidate in (
       CAR.TOYOTA_RAV4_TSS2, CAR.TOYOTA_RAV4_TSS2_2022, CAR.TOYOTA_RAV4_TSS2_2023,
-      CAR.TOYOTA_RAV4_PRIME, CAR.TOYOTA_SIENNA_4TH_GEN, CAR.TOYOTA_WILDLANDER_PHEV
+      CAR.TOYOTA_RAV4_PRIME, CAR.TOYOTA_SIENNA_4TH_GEN
     ):
       ret.lateralTuning.init('pid')
       ret.lateralTuning.pid.kiBP = [0.0]
@@ -210,6 +210,13 @@ class CarInterface(CarInterfaceBase):
     if sp_toyota_auto_brake_hold and candidate in (TSS2_CAR - RADAR_ACC_CAR - SECOC_CAR):
       ret.flags |= ToyotaFlagsSP.SP_AUTO_BRAKE_HOLD.value
 
+    if candidate in (CAR.TOYOTA_WILDLANDER, ):
+      stock_cp.lateralTuning.init('pid')
+      stock_cp.lateralTuning.pid.kiBP = [0.0]
+      stock_cp.lateralTuning.pid.kpBP = [0.0]
+      stock_cp.lateralTuning.pid.kpV = [0.6]
+      stock_cp.lateralTuning.pid.kiV = [0.1]
+      stock_cp.lateralTuning.pid.kf = 0.00007818594
 
     return ret
 
