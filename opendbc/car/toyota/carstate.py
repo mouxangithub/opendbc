@@ -112,7 +112,7 @@ class CarState(CarStateBase):
       if not self.CP.enableDsu and not self.CP.flags & ToyotaFlags.DISABLE_RADAR.value:
         ret.stockAeb = bool(cp_acc.vl["PRE_COLLISION"]["PRECOLLISION_ACTIVE"] and cp_acc.vl["PRE_COLLISION"]["FORCE"] < -1e-5)
 
-    if self.toyota_drive_mode:
+    if self.toyota_drive_mode and not(self.CP.flags & ToyotaFlags.SECOC.value):
       # Determine sport signal based on car model
       sport_signal = 'SPORT_ON_2' if self.CP.carFingerprint in (CAR.TOYOTA_RAV4_TSS2, CAR.LEXUS_ES_TSS2, CAR.TOYOTA_HIGHLANDER_TSS2) else 'SPORT_ON'
 
@@ -165,6 +165,8 @@ class CarState(CarStateBase):
       cp.vl["WHEEL_SPEEDS"]["WHEEL_SPEED_RR"],
     )
     ret.vEgoCluster = ret.vEgo * 1.015  # minimum of all the cars
+    if not self.CP.flags & ToyotaFlags.SECOC.value:
+      ret.yawRate = float(cp.vl["KINEMATICS"]["YAW_RATE"] * CV.DEG_TO_RAD)
 
     ret.standstill = abs(ret.vEgoRaw) < 1e-3
 
