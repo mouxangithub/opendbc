@@ -276,8 +276,8 @@ class TestFwFingerprintTiming:
         'toyota': 0.7,
         'volkswagen': 0.65,
         'rivian': 0.3,
-        'byd': 0.1, #todo: verify this value in official device
         'psa': 0.1,
+        'byd': 0.1, #todo: verify this value in official device
       },
       2: {
         'ford': 1.6,
