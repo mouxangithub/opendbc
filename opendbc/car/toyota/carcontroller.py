@@ -1,5 +1,6 @@
 import math
 import numpy as np
+from openpilot.common.params import Params
 from opendbc.car import Bus, make_tester_present_msg, rate_limit, structs, ACCELERATION_DUE_TO_GRAVITY, DT_CTRL
 from opendbc.car.lateral import apply_meas_steer_torque_limits, apply_std_steer_angle_limits, common_fault_avoidance
 from opendbc.car.can_definitions import CanData
@@ -13,6 +14,7 @@ from opendbc.car.toyota.values import CAR, STATIC_DSU_MSGS, NO_STOP_TIMER_CAR, T
                                         CarControllerParams, ToyotaFlags, \
                                         UNSUPPORTED_DSU_CAR
 from opendbc.can import CANPacker
+from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP
 
 from opendbc.sunnypilot.car.toyota.secoc_long import SecOCLongCarController
 
@@ -20,12 +22,15 @@ Ecu = structs.CarParams.Ecu
 LongCtrlState = structs.CarControl.Actuators.LongControlState
 SteerControlType = structs.CarParams.SteerControlType
 VisualAlert = structs.CarControl.HUDControl.VisualAlert
+GearShifter = structs.CarState.GearShifter
 
 # The up limit allows the brakes/gas to unwind quickly leaving a stop,
 # the down limit roughly matches the rate of ACCEL_NET, reducing PCM compensation windup
 ACCEL_WINDUP_LIMIT = 4.0 * DT_CTRL * 3  # m/s^2 / frame
 ACCEL_WINDDOWN_LIMIT = -4.0 * DT_CTRL * 3  # m/s^2 / frame
 ACCEL_PID_UNWIND = 0.03 * DT_CTRL * 3  # m/s^2 / frame
+
+MAX_PITCH_COMPENSATION = 1.5  # m/s^2
 
 # LKA limits
 # EPS faults if you apply torque while the steering rate is above 100 deg/s for too long
@@ -35,11 +40,27 @@ MAX_STEER_RATE_FRAMES = 18  # tx control frames needed before torque can be cut
 # EPS allows user torque above threshold for 50 frames before permanently faulting
 MAX_USER_TORQUE = 500
 
+LEFT_BLINDSPOT = b"\x41"
+RIGHT_BLINDSPOT = b"\x42"
 
 def get_long_tune(CP, params):
   if CP.carFingerprint in TSS2_CAR:
-    kiBP = [2., 5.]
-    kiV = [0.5, 0.25]
+    if Params().get_bool("ToyotaTSS2Long"):
+      if CP.carFingerprint == CAR.TOYOTA_RAV4_TSS2:
+        #optimal for rav4
+        #kiBP = [2.,  12.,  20.,  27.]
+        #kiV = [.348, .20,  .17,  .10]
+        kiBP = [2., 9.,]
+        kiV = [0.35, 0.22]
+      else:
+        # optimal for corolla
+        # kiBP = [0.,  12.,   20.,   27.]
+        # kiV =  [0.35, 0.20, 0.168, 0.1]
+        kiBP = [0.,  2.,  5.,  15.]
+        kiV = [0.36, 0.50, 0.23, 0.19]
+    else:
+      kiBP = [2., 5.]
+      kiV = [0.5, 0.25]
   else:
     kiBP = [0., 5., 35.]
     kiV = [3.6, 2.4, 1.5]
@@ -66,7 +87,8 @@ class CarController(CarControllerBase, SecOCLongCarController):
     # *** start long control state ***
     self.long_pid = get_long_tune(self.CP, self.params)
     self.aego = FirstOrderFilter(0.0, 0.25, DT_CTRL * 3)
-    self.pitch = FirstOrderFilter(0, 0.5, DT_CTRL)
+    self.pitch = FirstOrderFilter(0, 0.25, DT_CTRL)
+    self.pitch_slow = FirstOrderFilter(0, 1.5, DT_CTRL)
 
     self.accel = 0
     self.prev_accel = 0
@@ -78,6 +100,22 @@ class CarController(CarControllerBase, SecOCLongCarController):
     self.secoc_lta_message_counter = 0
     self.secoc_prev_reset_counter = 0
 
+    self.left_blindspot_debug_enabled = False
+    self.right_blindspot_debug_enabled = False
+    self.left_last_blindspot_frame = 0
+    self.right_last_blindspot_frame = 0
+
+    self._auto_lock_speed = 0.0
+
+    if CP_SP.flags & ToyotaFlagsSP.SP_AUTO_BRAKE_HOLD:
+      self.brake_hold_active: bool = False
+      self._brake_hold_counter: int = 0
+      self._brake_hold_reset: bool = False
+      self._prev_brake_pressed: bool = False
+
+    self._auto_lock_once = False
+    self._gear_prev = GearShifter.park
+
   def update(self, CC, CC_SP, CS, now_nanos):
     actuators = CC.actuators
     stopping = actuators.longControlState == LongCtrlState.stopping
@@ -87,6 +125,7 @@ class CarController(CarControllerBase, SecOCLongCarController):
 
     if len(CC.orientationNED) == 3:
       self.pitch.update(CC.orientationNED[1])
+      self.pitch_slow.update(CC.orientationNED[1])
 
     # *** control msgs ***
     can_sends = []
@@ -179,6 +218,9 @@ class CarController(CarControllerBase, SecOCLongCarController):
 
     self.last_standstill = CS.out.standstill
 
+    if self.CP_SP.flags & ToyotaFlagsSP.SP_AUTO_BRAKE_HOLD:
+      can_sends.extend(self.create_auto_brake_hold_messages(CS))
+
     # handle UI messages
     fcw_alert = hud_control.visualAlert == VisualAlert.fcw
     steer_alert = hud_control.visualAlert in (VisualAlert.steerRequired, VisualAlert.ldw)
@@ -225,6 +267,15 @@ class CarController(CarControllerBase, SecOCLongCarController):
           self.long_pid.i -= ACCEL_PID_UNWIND * float(np.sign(self.long_pid.i))
 
           error_future = pcm_accel_cmd - a_ego_future
+
+          if not stopping:
+            # Toyota's PCM slowly responds to changes in pitch. On change, we amplify our
+            # acceleration request to compensate for the undershoot and following overshoot
+            high_pass_pitch = self.pitch.x - self.pitch_slow.x
+            pitch_compensation = float(np.clip(math.sin(high_pass_pitch) * ACCELERATION_DUE_TO_GRAVITY,
+                                               -MAX_PITCH_COMPENSATION, MAX_PITCH_COMPENSATION))
+            pcm_accel_cmd += pitch_compensation
+
           pcm_accel_cmd = self.long_pid.update(error_future,
                                                speed=CS.out.vEgo,
                                                feedforward=pcm_accel_cmd,
@@ -287,6 +338,9 @@ class CarController(CarControllerBase, SecOCLongCarController):
     if self.frame % 20 == 0 and self.CP.flags & ToyotaFlags.DISABLE_RADAR.value:
       can_sends.append(make_tester_present_msg(0x750, 0, 0xF))
 
+    if self.CP_SP.flags & ToyotaFlagsSP.SP_ENHANCED_BSM and self.frame > 200:
+      can_sends.extend(self.create_enhanced_bsm_messages(CS, 20, True))
+
     new_actuators = actuators.as_builder()
     new_actuators.torque = apply_torque / self.params.STEER_MAX
     new_actuators.torqueOutputCan = apply_torque
@@ -295,3 +349,57 @@ class CarController(CarControllerBase, SecOCLongCarController):
 
     self.frame += 1
     return new_actuators, can_sends
+
+  # Enhanced BSM (@arne182, @rav4kumar)
+  def create_enhanced_bsm_messages(self, CS: structs.CarState, e_bsm_rate: int = 20, always_on: bool = True):
+    can_sends = []
+
+    # left bsm
+    if not self.left_blindspot_debug_enabled:
+      if always_on or CS.out.vEgo > 6:  # eagle eye camera will stop working if left bsm is switched on under 6m/s
+        can_sends.append(toyotacan.create_set_bsm_debug_mode(LEFT_BLINDSPOT, True))
+        self.left_blindspot_debug_enabled = True
+    else:
+      if not always_on and self.frame - self.left_last_blindspot_frame > 50:
+        can_sends.append(toyotacan.create_set_bsm_debug_mode(LEFT_BLINDSPOT, False))
+        self.left_blindspot_debug_enabled = False
+      if self.frame % e_bsm_rate == 0:
+        can_sends.append(toyotacan.create_bsm_polling_status(LEFT_BLINDSPOT))
+        self.left_last_blindspot_frame = self.frame
+
+    # right bsm
+    if not self.right_blindspot_debug_enabled:
+      if always_on or CS.out.vEgo > 6:  # eagle eye camera will stop working if right bsm is switched on under 6m/s
+        can_sends.append(toyotacan.create_set_bsm_debug_mode(RIGHT_BLINDSPOT, True))
+        self.right_blindspot_debug_enabled = True
+    else:
+      if not always_on and self.frame - self.right_last_blindspot_frame > 50:
+        can_sends.append(toyotacan.create_set_bsm_debug_mode(RIGHT_BLINDSPOT, False))
+        self.right_blindspot_debug_enabled = False
+      if self.frame % e_bsm_rate == e_bsm_rate // 2:
+        can_sends.append(toyotacan.create_bsm_polling_status(RIGHT_BLINDSPOT))
+        self.right_last_blindspot_frame = self.frame
+
+    return can_sends
+
+  # auto brake hold (https://github.com/AlexandreSato/)
+  def create_auto_brake_hold_messages(self, CS: structs.CarState, brake_hold_allowed_timer: int = 100):
+    can_sends = []
+    disallowed_gears = [GearShifter.park, GearShifter.reverse]
+    brake_hold_allowed = CS.out.standstill and CS.out.cruiseState.available and not CS.out.gasPressed and \
+                         not CS.out.cruiseState.enabled and (CS.out.gearShifter not in disallowed_gears)
+
+    if brake_hold_allowed:
+      self._brake_hold_counter += 1
+      self.brake_hold_active = self._brake_hold_counter > brake_hold_allowed_timer and not self._brake_hold_reset
+      self._brake_hold_reset = not self._prev_brake_pressed and CS.out.brakePressed and not self._brake_hold_reset
+    else:
+      self._brake_hold_counter = 0
+      self.brake_hold_active = False
+      self._brake_hold_reset = False
+    self._prev_brake_pressed = CS.out.brakePressed
+
+    if self.frame % 2 == 0:
+      can_sends.append(toyotacan.create_brake_hold_command(self.packer, self.frame, CS.pre_collision_2, self.brake_hold_active))
+
+    return can_sends
