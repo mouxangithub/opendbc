@@ -40,10 +40,7 @@ class CarInterface(CarInterfaceBase):
       return 0.10006696 * sigmoid * (v_ego + 3.12485927)
 
     def get_steer_feedforward_function(self):
-      if self.CP.carFingerprint == CAR.CHEVROLET_VOLT:
-        return self.get_steer_feedforward_volt
-      else:
-        return CarInterfaceBase.get_steer_feedforward_default
+      return CarInterfaceBase.get_steer_feedforward_default
 
     def get_lataccel_torque_siglin(self) -> float:
 
