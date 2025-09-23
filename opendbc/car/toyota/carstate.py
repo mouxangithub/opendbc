@@ -106,7 +106,7 @@ class CarState(CarStateBase):
       if not self.CP.enableDsu and not self.CP.flags & ToyotaFlags.DISABLE_RADAR.value:
         ret.stockAeb = bool(cp_acc.vl["PRE_COLLISION"]["PRECOLLISION_ACTIVE"] and cp_acc.vl["PRE_COLLISION"]["FORCE"] < -1e-5)
 
-    if self.toyota_drive_mode:
+    if self.toyota_drive_mode and not(self.CP.flags & ToyotaFlags.SECOC.value):
       # Determine sport signal based on car model
       sport_signal = 'SPORT_ON_2' if self.CP.carFingerprint in (CAR.TOYOTA_RAV4_TSS2, CAR.LEXUS_ES_TSS2, CAR.TOYOTA_HIGHLANDER_TSS2) else 'SPORT_ON'
 
@@ -267,10 +267,11 @@ class CarState(CarStateBase):
       if self.CP.carFingerprint not in RADAR_ACC_CAR:
         # distance button is wired to the ACC module (camera or radar)
         prev_distance_button = self.distance_button
-        if self.CP.carFingerprint in (SECOC_CAR):
-          self.distance_button = cp.vl["PCM_CRUISE_4"]["DISTANCE"]
-        else:
-          self.distance_button = cp_acc.vl["ACC_CONTROL"]["DISTANCE"]
+        # if self.CP.carFingerprint in (SECOC_CAR):
+        #   self.distance_button = cp.vl["PCM_CRUISE_4"]["DISTANCE"]
+        # else:
+        #   self.distance_button = cp_acc.vl["ACC_CONTROL"]["DISTANCE"]
+        self.distance_button = cp_acc.vl["ACC_CONTROL"]["DISTANCE"]
 
         buttonEvents += create_button_events(self.distance_button, prev_distance_button, {1: ButtonType.gapAdjustCruise})
     ret.buttonEvents = buttonEvents
