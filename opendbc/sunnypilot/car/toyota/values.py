@@ -7,10 +7,13 @@ See the LICENSE.md file in the root directory for more details.
 from enum import IntFlag
 
 class ToyotaFlagsSP(IntFlag):
-  SP_ENHANCED_BSM = 1
-  SP_NEED_DEBUG_BSM = 2
-  SP_AUTO_BRAKE_HOLD = 4
+  SMART_DSU = 1
+  RADAR_CAN_FILTER = 2
+  SP_ENHANCED_BSM = 4
+  SP_NEED_DEBUG_BSM = 8
+  SP_AUTO_BRAKE_HOLD = 16
 
 class ToyotaSafetyFlagsSP:
   DEFAULT = 0
   UNSUPPORTED_DSU = 1
+  GAS_INTERCEPTOR = 2

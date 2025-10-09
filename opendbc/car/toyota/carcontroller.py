@@ -16,6 +16,7 @@ from opendbc.car.toyota.values import CAR, STATIC_DSU_MSGS, NO_STOP_TIMER_CAR, T
 from opendbc.can import CANPacker
 from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP
 
+from opendbc.sunnypilot.car.toyota.gas_interceptor import GasInterceptorCarController
 from opendbc.sunnypilot.car.toyota.secoc_long import SecOCLongCarController
 
 Ecu = structs.CarParams.Ecu
@@ -50,16 +51,16 @@ def get_long_tune(CP, params):
         #optimal for rav4
         #kiBP = [2.,  12.,  20.,  27.]
         #kiV = [.348, .20,  .17,  .10]
-        kiBP = [0.,  2.,  5.,  15.]
-        kiV = [0.36, 0.43, 0.222, 0.19]
+        kiBP = [0.,  2.,  5.,  17.,  27.]
+        kiV = [0.40, 0.50, 0.26, 0.17, 0.12]
         #kiBP = [2., 9.,]
         #kiV = [0.35, 0.22]
       else:
         # optimal for corolla
         # kiBP = [0.,  12.,   20.,   27.]
         # kiV =  [0.35, 0.20, 0.168, 0.1]
-        kiBP = [0.,  2.,  5.,  15.]
-        kiV = [0.36, 0.43, 0.222, 0.19]
+        kiBP = [0.,  2.,  5.,   27.]
+        kiV = [0.37, 0.48, 0.25, 0.101]
     else:
       kiBP = [2., 5.]
       kiV = [0.5, 0.25]
@@ -72,10 +73,11 @@ def get_long_tune(CP, params):
                        rate=1 / (DT_CTRL * 3))
 
 
-class CarController(CarControllerBase, SecOCLongCarController):
+class CarController(CarControllerBase, SecOCLongCarController, GasInterceptorCarController):
   def __init__(self, dbc_names, CP, CP_SP):
-    super().__init__(dbc_names, CP, CP_SP)
+    CarControllerBase.__init__(self, dbc_names, CP, CP_SP)
     SecOCLongCarController.__init__(self, CP)
+    GasInterceptorCarController.__init__(self, CP, CP_SP)
     self.params = CarControllerParams(self.CP)
     self.last_torque = 0
     self.last_angle = 0
@@ -212,7 +214,7 @@ class CarController(CarControllerBase, SecOCLongCarController):
     # *** gas and brake ***
 
     # on entering standstill, send standstill request
-    if CS.out.standstill and not self.last_standstill and (self.CP.carFingerprint not in NO_STOP_TIMER_CAR):
+    if CS.out.standstill and not self.last_standstill and (self.CP.carFingerprint not in NO_STOP_TIMER_CAR or self.CP_SP.enableGasInterceptor):
       self.standstill_req = True
     if CS.pcm_acc_status != 8:
       # pcm entered standstill or it's disabled
@@ -293,6 +295,7 @@ class CarController(CarControllerBase, SecOCLongCarController):
         elif net_acceleration_request_min > 0.3:
           self.permit_braking = False
 
+        pcm_accel_cmd = pcm_accel_cmd if self.CP.carFingerprint in TSS2_CAR else actuators.accel
         pcm_accel_cmd = float(np.clip(pcm_accel_cmd, self.params.ACCEL_MIN, self.params.ACCEL_MAX))
 
         can_sends.append(toyotacan.create_accel_command(self.packer, pcm_accel_cmd, pcm_cancel_cmd, self.permit_braking, self.standstill_req, lead,
@@ -307,6 +310,8 @@ class CarController(CarControllerBase, SecOCLongCarController):
         else:
           can_sends.append(toyotacan.create_accel_command(self.packer, 0, pcm_cancel_cmd, True, False, lead, CS.acc_type, False, self.distance_button,
                                                           self.SECOC_LONG))
+
+    can_sends.extend(GasInterceptorCarController.create_gas_command(self, CC, CS, actuators, self.packer, self.frame))
 
     # *** hud ui ***
     if self.CP.carFingerprint != CAR.TOYOTA_PRIUS_V:
@@ -348,6 +353,7 @@ class CarController(CarControllerBase, SecOCLongCarController):
     new_actuators.torqueOutputCan = apply_torque
     new_actuators.steeringAngleDeg = self.last_angle
     new_actuators.accel = self.accel
+    new_actuators.gas = self.gas
 
     self.frame += 1
     return new_actuators, can_sends
