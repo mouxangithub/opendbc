@@ -202,15 +202,14 @@ class CarState(CarStateBase, CarStateExt):
         self.distance_button = cp_acc.vl["ACC_CONTROL"]["DISTANCE"]
 
         buttonEvents += create_button_events(self.distance_button, prev_distance_button, {1: ButtonType.gapAdjustCruise})
+    elif self.CP_SP.flags & ToyotaFlagsSP.SMART_DSU and not self.CP_SP.flags & ToyotaFlagsSP.RADAR_CAN_FILTER:
+      self.distance_button = cp.vl["SDSU"]["FD_BUTTON"]
 
-      elif self.CP_SP.flags & ToyotaFlagsSP.SMART_DSU and not self.CP_SP.flags & ToyotaFlagsSP.RADAR_CAN_FILTER:
+      buttonEvents += create_button_events(self.distance_button, prev_distance_button, {1: ButtonType.gapAdjustCruise})
 
-        self.distance_button = cp.vl["SDSU"]["FD_BUTTON"]
-
-        buttonEvents += create_button_events(self.distance_button, prev_distance_button, {1: ButtonType.gapAdjustCruise})
     ret.buttonEvents = buttonEvents
 
-    CarStateExt.update(self, ret, can_parsers)
+    CarStateExt.update(self, ret, ret_sp, can_parsers)
 
     return ret, ret_sp
 
@@ -220,7 +219,12 @@ class CarState(CarStateBase, CarStateExt):
       ("BLINKERS_STATE", float('nan')),
     ]
 
+    cam_messages = [
+      ("RSA1", 0),
+      ("RSA2", 0),
+    ]
+
     return {
       Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], pt_messages, 0),
-      Bus.cam: CANParser(DBC[CP.carFingerprint][Bus.pt], [], 2),
+      Bus.cam: CANParser(DBC[CP.carFingerprint][Bus.pt], [] + cam_messages, 2),
     }

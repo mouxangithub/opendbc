@@ -36,11 +36,21 @@
 |BYD|TANG DM|All|[Upstream](#upstream)|
 |BYD|TANG DMI 21|All|[Dashcam mode](#dashcam)|
 |BYD|YUAN PLUS DMI 22|All|[Dashcam mode](#dashcam)|
+|Cadillac|CT6 Non-ACC 2017-18|Adaptive Cruise Control (ACC)|[Dashcam mode](#dashcam)|
+|Cadillac|XT5 Non-ACC 2018|Adaptive Cruise Control (ACC)|[Dashcam mode](#dashcam)|
 |Chevrolet|Bolt EUV 2022-23|Premier or Premier Redline Trim without Super Cruise Package|[Upstream](#upstream)|
+|Chevrolet|Bolt EUV LT Non-ACC 2022-23|Adaptive Cruise Control (ACC)|[Dashcam mode](#dashcam)|
 |Chevrolet|Bolt EV 2022-23|2LT Trim with Adaptive Cruise Control Package|[Upstream](#upstream)|
+|Chevrolet|Bolt EV LT Non-ACC 2022-23|Adaptive Cruise Control (ACC)|[Dashcam mode](#dashcam)|
+|Chevrolet|Bolt EV Non-ACC 2017|Adaptive Cruise Control (ACC)|[Upstream](#upstream)|
+|Chevrolet|Bolt EV Non-ACC 2018-21|Adaptive Cruise Control (ACC)|[Upstream](#upstream)|
 |Chevrolet|Equinox 2019-22|Adaptive Cruise Control (ACC)|[Upstream](#upstream)|
+|Chevrolet|Equinox Non-ACC 2019-22|Adaptive Cruise Control (ACC)|[Dashcam mode](#dashcam)|
+|Chevrolet|Malibu Non-ACC 2016-23|Adaptive Cruise Control (ACC)|[Upstream](#upstream)|
 |Chevrolet|Silverado 1500 2020-21|Safety Package II|[Upstream](#upstream)|
+|Chevrolet|Suburban Non-ACC 2016-20|Adaptive Cruise Control (ACC)|[Dashcam mode](#dashcam)|
 |Chevrolet|Trailblazer 2021-22|Adaptive Cruise Control (ACC)|[Upstream](#upstream)|
+|Chevrolet|Trailblazer Non-ACC 2021-22|Adaptive Cruise Control (ACC)|[Dashcam mode](#dashcam)|
 |Chrysler|Pacifica 2017-18|Adaptive Cruise Control (ACC)|[Upstream](#upstream)|
 |Chrysler|Pacifica 2019-20|Adaptive Cruise Control (ACC)|[Upstream](#upstream)|
 |Chrysler|Pacifica 2021-23|All|[Upstream](#upstream)|
@@ -120,8 +130,9 @@
 |Honda|HR-V 2023-25|All|[Upstream](#upstream)|
 |Honda|Insight 2019-22|All|[Upstream](#upstream)|
 |Honda|Inspire 2018|All|[Upstream](#upstream)|
+|Honda|N-Box 2018|All|[Upstream](#upstream)|
 |Honda|Odyssey 2018-20|Honda Sensing|[Upstream](#upstream)|
-|Honda|Odyssey 2021-25|All|[Community](#community)|
+|Honda|Odyssey 2021-25|All|[Upstream](#upstream)|
 |Honda|Passport 2019-25|All|[Upstream](#upstream)|
 |Honda|Passport 2026|All|[Community](#community)|
 |Honda|Pilot 2016-22|Honda Sensing|[Upstream](#upstream)|
@@ -189,7 +200,7 @@
 |Kia|EV6 (without HDA II) 2022-24|Highway Driving Assist|[Upstream](#upstream)|
 |Kia|Forte 2019-21|Smart Cruise Control (SCC)|[Upstream](#upstream)|
 |Kia|Forte 2022-23|Smart Cruise Control (SCC)|[Upstream](#upstream)|
-|Kia|Forte Non-SCC 2019|No Smart Cruise Control (Non-SCC)|[Dashcam mode](#dashcam)|
+|Kia|Forte Non-SCC 2019|No Smart Cruise Control (Non-SCC)|[Upstream](#upstream)|
 |Kia|Forte Non-SCC 2021|No Smart Cruise Control (Non-SCC)|[Dashcam mode](#dashcam)|
 |Kia|K5 2021-24|Smart Cruise Control (SCC)|[Upstream](#upstream)|
 |Kia|K5 Hybrid 2020-22|Smart Cruise Control (SCC)|[Upstream](#upstream)|
@@ -444,7 +455,6 @@ Supported Models' section of each make [on our wiki](https://wiki.comma.ai/).
 Some notable works-in-progress:
 * Honda
   * 2022-24 Acura RDX, commaai/opendbc#1967
-  * 2021-25 Honda Odyssey, commaai/opendbc#2488
   * Camera ACC stability improvements, commaai/opendbc#2192
   * Alpha longitudinal stability improvements, commaai/opendbc#2347 and commaai/opendbc#2165
 

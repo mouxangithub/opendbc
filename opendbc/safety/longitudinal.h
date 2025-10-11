@@ -37,4 +37,3 @@ bool longitudinal_brake_checks(int desired_brake, const LongitudinalLimits limit
 bool longitudinal_interceptor_checks(const CANPacket_t *msg) {
   return !get_longitudinal_allowed() && (msg->data[0] || msg->data[1]);
 }
-

@@ -62,7 +62,7 @@
 #define TOYOTA_DSU_CRUISE_ADDR_CHECK                                                                                                      \
   {.msg = {{0x365, 0, 7, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true, .frequency = 5U}, { 0 }, { 0 }}},  \
 
-  #define TOYOTA_GAS_INTERCEPTOR_ADDR_CHECK                                                   \
+#define TOYOTA_GAS_INTERCEPTOR_ADDR_CHECK                                                   \
   {.msg = {{0x201, 0, 6, 50U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}}, \
 
 static bool toyota_secoc = false;
