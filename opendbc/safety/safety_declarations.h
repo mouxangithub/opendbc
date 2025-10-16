@@ -33,6 +33,7 @@
 #define SAFETY_PSA 31U
 #define SAFETY_RIVIAN 33U
 #define SAFETY_VOLKSWAGEN_MEB 34U
+#define SAFETY_BYD 35U
 
 #define GET_BIT(msg, b) ((bool)!!(((msg)->data[((b) / 8U)] >> ((b) % 8U)) & 0x1U))
 #define GET_FLAG(value, mask) (((__typeof__(mask))(value) & (mask)) == (mask)) // cppcheck-suppress misra-c2012-1.2; allow __typeof__
@@ -325,6 +326,7 @@ int safety_fwd_hook(int bus_num, int addr);
 int set_safety_hooks(uint16_t mode, uint16_t param);
 
 extern const safety_hooks body_hooks;
+extern const safety_hooks byd_hooks;
 extern const safety_hooks chrysler_hooks;
 extern const safety_hooks elm327_hooks;
 extern const safety_hooks nooutput_hooks;
