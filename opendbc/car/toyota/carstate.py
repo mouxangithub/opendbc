@@ -88,6 +88,8 @@ class CarState(CarStateBase):
       cp.vl["WHEEL_SPEEDS"]["WHEEL_SPEED_RR"],
     )
     ret.vEgoCluster = ret.vEgo * 1.015  # minimum of all the cars
+    if not self.CP.flags & ToyotaFlags.SECOC.value:
+      ret.yawRate = float(cp.vl["KINEMATICS"]["YAW_RATE"] * CV.DEG_TO_RAD)
 
     ret.standstill = abs(ret.vEgoRaw) < 1e-3
 
