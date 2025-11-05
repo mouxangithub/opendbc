@@ -190,7 +190,7 @@
 |Kia|EV6 (without HDA II) 2022-24|Highway Driving Assist|[Upstream](#upstream)|
 |Kia|Forte 2019-21|Smart Cruise Control (SCC)|[Upstream](#upstream)|
 |Kia|Forte 2022-23|Smart Cruise Control (SCC)|[Upstream](#upstream)|
-|Kia|Forte Non-SCC 2019|No Smart Cruise Control (Non-SCC)|[Dashcam mode](#dashcam)|
+|Kia|Forte Non-SCC 2019|No Smart Cruise Control (Non-SCC)|[Upstream](#upstream)|
 |Kia|Forte Non-SCC 2021|No Smart Cruise Control (Non-SCC)|[Dashcam mode](#dashcam)|
 |Kia|K5 2021-24|Smart Cruise Control (SCC)|[Upstream](#upstream)|
 |Kia|K5 Hybrid 2020-22|Smart Cruise Control (SCC)|[Upstream](#upstream)|
@@ -362,7 +362,7 @@
 |Toyota|Sienna 2024-25|Any|[Not compatible](#can-bus-security)|
 |Toyota|Tundra 2022-25|Any|[Not compatible](#can-bus-security)|
 |Toyota|Venza 2021-25|Any|[Not compatible](#can-bus-security)|
-|Toyota|Wildlander PHEV 2021|All|[Upstream](#upstream)|
+|Toyota|Wildlander PHEV 2021-23|All|[Upstream](#upstream)|
 |Toyota|Yaris (Non-US only) 2020, 2023|All|[Community](#community)|
 |Volkswagen|Arteon 2018-23|Adaptive Cruise Control (ACC) & Lane Assist|[Upstream](#upstream)|
 |Volkswagen|Arteon eHybrid 2020-23|Adaptive Cruise Control (ACC) & Lane Assist|[Upstream](#upstream)|
