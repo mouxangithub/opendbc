@@ -140,6 +140,104 @@
     ],
     "package": "Driver Confidence Package 2"
   },
+  "BYD Han DM 2020": {
+    "platform": "BYD_HAN_DM_20",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "Han DM",
+    "year": [
+      "2020"
+    ],
+    "package": "All"
+  },
+  "BYD Han EV 2020": {
+    "platform": "BYD_HAN_EV_20",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "Han EV",
+    "year": [
+      "2020"
+    ],
+    "package": "All"
+  },
+  "BYD Tang DM": {
+    "platform": "BYD_TANG_DM",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "Tang DM",
+    "year": [],
+    "package": "All"
+  },
+  "BYD Tang DMI 2021": {
+    "platform": "BYD_TANG_DMI_21",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "Tang DMI",
+    "year": [
+      "2021"
+    ],
+    "package": "All"
+  },
+  "BYD Song Plus DMI 2021": {
+    "platform": "BYD_SONG_PLUS_DMI_21",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "Song Plus DMI",
+    "year": [
+      "2021"
+    ],
+    "package": "All"
+  },
+  "BYD Song Plus DMI 2022": {
+    "platform": "BYD_SONG_PLUS_DMI_22",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "Song Plus DMI",
+    "year": [
+      "2022"
+    ],
+    "package": "All"
+  },
+  "BYD Song Plus DMI 2023": {
+    "platform": "BYD_SONG_PLUS_DMI_23",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "Song Plus DMI",
+    "year": [
+      "2023"
+    ],
+    "package": "All"
+  },
+  "BYD Song Pro DMI 2022": {
+    "platform": "BYD_SONG_PRO_DMI_22",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "Song Pro DMI",
+    "year": [
+      "2022"
+    ],
+    "package": "All"
+  },
+  "BYD Qin Plus DMI 2023": {
+    "platform": "BYD_QIN_PLUS_DMI_23",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "Qin Plus DMI",
+    "year": [
+      "2023"
+    ],
+    "package": "All"
+  },
+  "BYD Yuan Plus DMI 2022": {
+    "platform": "BYD_YUAN_PLUS_DMI_22",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "Yuan Plus DMI",
+    "year": [
+      "2022"
+    ],
+    "package": "All"
+  },
   "Cadillac Escalade 2017": {
     "platform": "CADILLAC_ESCALADE",
     "make": "Cadillac",
@@ -971,13 +1069,14 @@
     ],
     "package": "All"
   },
-  "Honda Civic Hatchback Hybrid 2025": {
+  "Honda Civic Hatchback Hybrid 2025-26": {
     "platform": "HONDA_CIVIC_2022",
     "make": "Honda",
     "brand": "honda",
     "model": "Civic Hatchback Hybrid",
     "year": [
-      "2025"
+      "2025",
+      "2026"
     ],
     "package": "All"
   },
@@ -1159,6 +1258,16 @@
     ],
     "package": "All"
   },
+  "Honda N-Box 2018": {
+    "platform": "HONDA_NBOX_2G",
+    "make": "Honda",
+    "brand": "honda",
+    "model": "N-Box",
+    "year": [
+      "2018"
+    ],
+    "package": "All"
+  },
   "Honda Odyssey 2018-20": {
     "platform": "HONDA_ODYSSEY",
     "make": "Honda",
@@ -1170,6 +1279,20 @@
       "2020"
     ],
     "package": "Honda Sensing"
+  },
+  "Honda Odyssey 2021-25": {
+    "platform": "HONDA_ODYSSEY_5G_MMR",
+    "make": "Honda",
+    "brand": "honda",
+    "model": "Odyssey",
+    "year": [
+      "2021",
+      "2022",
+      "2023",
+      "2024",
+      "2025"
+    ],
+    "package": "All"
   },
   "Honda Passport 2019-25": {
     "platform": "HONDA_PILOT",
@@ -1888,6 +2011,16 @@
       "2023"
     ],
     "package": "Smart Cruise Control (SCC)"
+  },
+  "Kia Forte Non-SCC 2019": {
+    "platform": "KIA_FORTE_2019_NON_SCC",
+    "make": "Kia",
+    "brand": "hyundai",
+    "model": "Forte Non-SCC",
+    "year": [
+      "2019"
+    ],
+    "package": "No Smart Cruise Control (Non-SCC)"
   },
   "Kia K5 2021-24": {
     "platform": "KIA_K5_2021",
@@ -3031,13 +3164,14 @@
     ],
     "package": "All"
   },
-  "Tesla Model Y (with HW4) 2024": {
+  "Tesla Model Y (with HW4) 2024-25": {
     "platform": "TESLA_MODEL_Y",
     "make": "Tesla",
     "brand": "tesla",
     "model": "Model Y (with HW4)",
     "year": [
-      "2024"
+      "2024",
+      "2025"
     ],
     "package": "All"
   },
@@ -3585,13 +3719,15 @@
     ],
     "package": "All"
   },
-  "Toyota Wildlander PHEV 2021": {
-    "platform": "TOYOTA_WILDLANDER",
+  "Toyota Wildlander PHEV 2021-23": {
+    "platform": "TOYOTA_WILDLANDER_PHEV",
     "make": "Toyota",
     "brand": "toyota",
     "model": "Wildlander PHEV",
     "year": [
-      "2021"
+      "2021",
+      "2022",
+      "2023"
     ],
     "package": "All"
   },
