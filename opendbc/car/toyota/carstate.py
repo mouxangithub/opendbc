@@ -1,18 +1,19 @@
 import copy
-
+from cereal import custom
+from openpilot.common.params import Params
 from opendbc.can import CANDefine, CANParser
 from opendbc.car import Bus, DT_CTRL, create_button_events, structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.common.filter_simple import FirstOrderFilter
 from opendbc.car.interfaces import CarStateBase
 from opendbc.car.toyota.values import ToyotaFlags, CAR, DBC, STEER_THRESHOLD, NO_STOP_TIMER_CAR, \
-                                                  TSS2_CAR, RADAR_ACC_CAR, EPS_SCALE, UNSUPPORTED_DSU_CAR
+                                                  TSS2_CAR, RADAR_ACC_CAR, EPS_SCALE, UNSUPPORTED_DSU_CAR, SECOC_CAR
 from opendbc.sunnypilot.car.toyota.carstate_ext import CarStateExt
 from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP
 
 ButtonType = structs.CarState.ButtonEvent.Type
 SteerControlType = structs.CarParams.SteerControlType
-
+AccelPersonality = custom.LongitudinalPlanSP.AccelerationPersonality
 # These steering fault definitions seem to be common across LKA (torque) and LTA (angle):
 # - high steer rate fault: goes to 21 or 25 for 1 frame, then 9 for 2 seconds
 # - lka/lta msg drop out: goes to 9 then 11 for a combined total of 2 seconds, then 3.
@@ -24,7 +25,12 @@ TEMP_STEER_FAULTS = (0, 9, 11, 21, 25)
 # - prolonged high driver torque: 17 (permanent)
 PERM_STEER_FAULTS = (3, 17)
 
-
+_TRAFFIC_SIGNAL_MAP = {
+  1: "kph",
+  36: "mph",
+  65: "No overtake",
+  66: "No overtake"
+}
 class CarState(CarStateBase, CarStateExt):
   def __init__(self, CP, CP_SP):
     CarStateBase.__init__(self, CP, CP_SP)
@@ -44,6 +50,7 @@ class CarState(CarStateBase, CarStateExt):
     # Need to apply an offset as soon as the steering angle measurements are both received
     self.accurate_steer_angle_seen = False
     self.angle_offset = FirstOrderFilter(None, 60.0, DT_CTRL, initialized=False)
+    self._init_traffic_signals()
 
     self.lkas_button = 0
     self.distance_button = 0
@@ -54,6 +61,29 @@ class CarState(CarStateBase, CarStateExt):
     self.lkas_hud = {}
     self.gvc = 0.0
     self.secoc_synchronization = None
+
+    self._left_blindspot = False
+    self._left_blindspot_d1 = 0
+    self._left_blindspot_d2 = 0
+    self._left_blindspot_counter = 0
+
+    self._right_blindspot = False
+    self._right_blindspot_d1 = 0
+    self._right_blindspot_d2 = 0
+    self._right_blindspot_counter = 0
+
+    self.signals_checked = False
+    self.sport_signal_seen = False
+    self.eco_signal_seen = False
+    self.accel_profile = None
+    self.prev_accel_profile = None
+    self.accel_profile_init = False
+    self.toyota_drive_mode = Params().get_bool('ToyotaDriveMode')
+
+    if CP_SP.flags & ToyotaFlagsSP.SP_AUTO_BRAKE_HOLD:
+      self.pre_collision_2 = {}
+
+    self.frame = 0
 
   def update(self, can_parsers) -> tuple[structs.CarState, structs.CarStateSP]:
     cp = can_parsers[Bus.pt]
@@ -83,6 +113,52 @@ class CarState(CarStateBase, CarStateExt):
       can_gear = int(cp.vl["GEAR_PACKET"]["GEAR"])
       if not self.CP.enableDsu and not self.CP.flags & ToyotaFlags.DISABLE_RADAR.value:
         ret.stockAeb = bool(cp_acc.vl["PRE_COLLISION"]["PRECOLLISION_ACTIVE"] and cp_acc.vl["PRE_COLLISION"]["FORCE"] < -1e-5)
+
+    if self.toyota_drive_mode and self.CP.carFingerprint not in SECOC_CAR:
+      # Determine sport signal based on car model
+      sport_signal = 'SPORT_ON_2' if self.CP.carFingerprint in (CAR.TOYOTA_RAV4_TSS2, CAR.LEXUS_ES_TSS2, CAR.TOYOTA_HIGHLANDER_TSS2) else 'SPORT_ON'
+
+      # Check signals once
+      if not self.signals_checked:
+        self.signals_checked = True
+
+        # Try to detect sport mode signal, handle missing signal with a fallback
+        try:
+          sport_mode = cp.vl["GEAR_PACKET"][sport_signal]
+          self.sport_signal_seen = True
+        except KeyError:
+          sport_mode = 0
+          self.sport_signal_seen = False
+
+        # Try to detect eco mode signal, handle missing signal with a fallback
+        try:
+          eco_mode = cp.vl["GEAR_PACKET"]['ECON_ON']
+          self.eco_signal_seen = True
+        except KeyError:
+          eco_mode = 0
+          self.eco_signal_seen = False
+      else:
+        # Always re-check the signals to account for mode changes
+        sport_mode = cp.vl["GEAR_PACKET"][sport_signal] if self.sport_signal_seen else 0
+        eco_mode = cp.vl["GEAR_PACKET"]['ECON_ON'] if self.eco_signal_seen else 0
+
+      # Set acceleration profile based on detected modes, with sport mode having higher priority
+      if sport_mode == 1:
+        self.accel_profile = AccelPersonality.sport
+      elif eco_mode == 1:
+        self.accel_profile = AccelPersonality.eco
+      else:
+        self.accel_profile = AccelPersonality.normal
+
+      #print(f"Accel profile set to: {self.accel_profile}")
+
+      # If not initialized, sync profile with the current mode on the car
+      if not self.accel_profile_init or self.accel_profile != self.prev_accel_profile:
+        #Params().put_nonblocking('AccelPersonality', str(self.accel_profile))
+        Params().put_nonblocking('AccelPersonality', int(self.accel_profile))
+        self.accel_profile_init = True
+        # Update the previous profile to prevent unnecessary re-syncing
+        self.prev_accel_profile = self.accel_profile
 
     self.parse_wheel_speeds(ret,
       cp.vl["WHEEL_SPEEDS"]["WHEEL_SPEED_FL"],
@@ -209,9 +285,144 @@ class CarState(CarStateBase, CarStateExt):
 
     ret.buttonEvents = buttonEvents
 
+    if self.CP_SP.flags & ToyotaFlagsSP.SP_ENHANCED_BSM and self.frame > 199:
+      ret.leftBlindspot, ret.rightBlindspot = self.sp_get_enhanced_bsm(cp)
+
+    if self.CP_SP.flags & ToyotaFlagsSP.SP_AUTO_BRAKE_HOLD:
+      self.pre_collision_2 = copy.copy(cp_cam.vl["PRE_COLLISION_2"])
+
+    self.frame += 1
+
     CarStateExt.update(self, ret, can_parsers)
 
     return ret, ret_sp
+
+  def _init_traffic_signals(self):
+    """Initialize traffic signal variables to None"""
+    self._tsgn1 = None
+    self._spdval1 = None
+    self._splsgn1 = None
+    self._tsgn2 = None
+    self._splsgn2 = None
+    self._tsgn3 = None
+    self._splsgn3 = None
+    self._tsgn4 = None
+    self._splsgn4 = None
+
+  def _update_traffic_signals(self, cp_cam):
+    """Update traffic signals with error handling"""
+    try:
+      # Add error handling for missing RSA messages
+      tsgn1 = cp_cam.vl.get("RSA1", {}).get('TSGN1', 0)
+      spdval1 = cp_cam.vl.get("RSA1", {}).get('SPDVAL1', 0)
+      splsgn1 = cp_cam.vl.get("RSA1", {}).get('SPLSGN1', 0)
+      tsgn2 = cp_cam.vl.get("RSA1", {}).get('TSGN2', 0)
+      splsgn2 = cp_cam.vl.get("RSA1", {}).get('SPLSGN2', 0)
+      tsgn3 = cp_cam.vl.get("RSA2", {}).get('TSGN3', 0)
+      splsgn3 = cp_cam.vl.get("RSA2", {}).get('SPLSGN3', 0)
+      tsgn4 = cp_cam.vl.get("RSA2", {}).get('TSGN4', 0)
+      splsgn4 = cp_cam.vl.get("RSA2", {}).get('SPLSGN4', 0)
+    except (KeyError, AttributeError) as e:
+      # Handle case where RSA messages are not available
+      print(f"RSA messages not available: {e}")
+      return
+
+    has_changed = tsgn1 != self._tsgn1 \
+                  or spdval1 != self._spdval1 \
+                  or splsgn1 != self._splsgn1 \
+                  or tsgn2 != self._tsgn2 \
+                  or splsgn2 != self._splsgn2 \
+                  or tsgn3 != self._tsgn3 \
+                  or splsgn3 != self._splsgn3 \
+                  or tsgn4 != self._tsgn4 \
+                  or splsgn4 != self._splsgn4
+
+    self._tsgn1 = tsgn1
+    self._spdval1 = spdval1
+    self._splsgn1 = splsgn1
+    self._tsgn2 = tsgn2
+    self._splsgn2 = splsgn2
+    self._tsgn3 = tsgn3
+    self._splsgn3 = splsgn3
+    self._tsgn4 = tsgn4
+    self._splsgn4 = splsgn4
+
+    if not has_changed:
+      return
+
+    print('---- TRAFFIC SIGNAL UPDATE -----')
+    if tsgn1 is not None and tsgn1 != 0:
+      print(f'TSGN1: {self._traffic_signal_description(tsgn1)}')
+    if spdval1 is not None and spdval1 != 0:
+      print(f'SPDVAL1: {spdval1}')
+    if splsgn1 is not None and splsgn1 != 0:
+      print(f'SPLSGN1: {splsgn1}')
+    if tsgn2 is not None and tsgn2 != 0:
+      print(f'TSGN2: {self._traffic_signal_description(tsgn2)}')
+    if splsgn2 is not None and splsgn2 != 0:
+      print(f'SPLSGN2: {splsgn2}')
+    if tsgn3 is not None and tsgn3 != 0:
+      print(f'TSGN3: {self._traffic_signal_description(tsgn3)}')
+    if splsgn3 is not None and splsgn3 != 0:
+      print(f'SPLSGN3: {splsgn3}')
+    if tsgn4 is not None and tsgn4 != 0:
+      print(f'TSGN4: {self._traffic_signal_description(tsgn4)}')
+    if splsgn4 is not None and splsgn4 != 0:
+      print(f'SPLSGN4: {splsgn4}')
+    print('------------------------')
+
+  def _traffic_signal_description(self, tsgn):
+    """Get description for traffic signal code"""
+    desc = _TRAFFIC_SIGNAL_MAP.get(int(tsgn))  # Fixed dictionary name
+    return f'{tsgn}: {desc}' if desc is not None else f'{tsgn}'
+
+  def _calculate_speed_limit(self):
+    """Calculate speed limit from traffic signals with validation"""
+    # Check all traffic sign slots for speed limits, not just tsgn1
+    for tsgn, spdval in [(self._tsgn1, self._spdval1), (self._tsgn2, None),
+                         (self._tsgn3, None), (self._tsgn4, None)]:
+      if tsgn == 1 and spdval is not None and 0 < spdval <= 200:  # Reasonable speed range
+        return spdval * CV.KPH_TO_MS
+      elif tsgn == 36 and spdval is not None and 0 < spdval <= 120:  # Reasonable MPH range
+        return spdval * CV.MPH_TO_MS
+    return 0
+
+  # Enhanced BSM (@arne182, @rav4kumar)
+  def sp_get_enhanced_bsm(self, cp):
+    # Let's keep all the commented out code for easy debug purposes in the future.
+    distance_1 = cp.vl["DEBUG"].get('BLINDSPOTD1')
+    distance_2 = cp.vl["DEBUG"].get('BLINDSPOTD2')
+    side = cp.vl["DEBUG"].get('BLINDSPOTSIDE')
+
+    if all(val is not None for val in [distance_1, distance_2, side]):
+      if side == 65:  # left blind spot
+        if distance_1 != self._left_blindspot_d1 or distance_2 != self._left_blindspot_d2:
+          self._left_blindspot_d1 = distance_1
+          self._left_blindspot_d2 = distance_2
+          self._left_blindspot_counter = 100
+        self._left_blindspot = distance_1 > 10 or distance_2 > 10
+
+      elif side == 66:  # right blind spot
+        if distance_1 != self._right_blindspot_d1 or distance_2 != self._right_blindspot_d2:
+          self._right_blindspot_d1 = distance_1
+          self._right_blindspot_d2 = distance_2
+          self._right_blindspot_counter = 100
+        self._right_blindspot = distance_1 > 10 or distance_2 > 10
+
+      # update counters
+      self._left_blindspot_counter = max(0, self._left_blindspot_counter - 1)
+      self._right_blindspot_counter = max(0, self._right_blindspot_counter - 1)
+
+      # reset blind spot status if counter reaches 0
+      if self._left_blindspot_counter == 0:
+        self._left_blindspot = False
+        self._left_blindspot_d1 = self._left_blindspot_d2 = 0
+
+      if self._right_blindspot_counter == 0:
+        self._right_blindspot = False
+        self._right_blindspot_d1 = self._right_blindspot_d2 = 0
+
+    return self._left_blindspot, self._right_blindspot
 
   @staticmethod
   def get_can_parsers(CP, CP_SP):
@@ -219,7 +430,13 @@ class CarState(CarStateBase, CarStateExt):
       ("BLINKERS_STATE", float('nan')),
     ]
 
+    cam_messages = []
+    cam_messages += [
+      ("RSA1", 0),
+      ("RSA2", 0),
+    ]
+
     return {
       Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], pt_messages, 0),
-      Bus.cam: CANParser(DBC[CP.carFingerprint][Bus.pt], [], 2),
+      Bus.cam: CANParser(DBC[CP.carFingerprint][Bus.pt], cam_messages, 2),
     }
