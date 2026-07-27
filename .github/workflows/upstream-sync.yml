@@ -1,0 +1,121 @@
+name: Upstream sync to master-c3-new
+
+on:
+  schedule:
+    - cron: "0 2 * * 1"
+  workflow_dispatch:
+    inputs:
+      trigger_panda:
+        description: "Trigger panda sync after success"
+        type: boolean
+        default: true
+  repository_dispatch:
+    types: [upstream-sync-run]
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+concurrency:
+  group: upstream-sync-opendbc
+  cancel-in-progress: false
+
+env:
+  FORK_BRANCH: master-c3
+  OUTPUT_BRANCH: master-c3-new
+  UPSTREAM_URL: https://github.com/sunnypilot/opendbc.git
+  UPSTREAM_BRANCH: master
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Merge upstream into master-c3-new
+        id: merge
+        run: bash .github/scripts/upstream_sync_merge.sh
+        env:
+          UPSTREAM_URL: ${{ env.UPSTREAM_URL }}
+
+      - name: Restore workflow scripts
+        if: steps.merge.outputs.merge_conflicts == 'true'
+        run: |
+          git fetch origin "${{ env.FORK_BRANCH }}"
+          git checkout "origin/${{ env.FORK_BRANCH }}" -- .github/scripts/ 2>/dev/null || true
+
+      - name: OpenCode resolve conflicts
+        if: steps.merge.outputs.merge_conflicts == 'true'
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          OPENCODE_MODEL: ${{ vars.OPENCODE_MODEL || 'opencode/deepseek-v4-flash' }}
+          FORK_BRANCH: ${{ env.FORK_BRANCH }}
+        run: bash .github/scripts/upstream_sync_opencode.sh .github/scripts/prompts/upstream_sync_opendbc.txt
+
+      - name: Verify conflict resolution
+        if: steps.merge.outputs.merge_conflicts == 'true'
+        run: |
+          git fetch origin "${{ env.FORK_BRANCH }}"
+          git checkout "origin/${{ env.FORK_BRANCH }}" -- .github/scripts/upstream_sync_verify.sh 2>/dev/null || true
+          bash .github/scripts/upstream_sync_verify.sh
+
+      - name: Run safety tests
+        id: test
+        continue-on-error: true
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          OPENCODE_MODEL: ${{ vars.OPENCODE_MODEL || 'opencode/deepseek-v4-flash' }}
+          MAX_FIX_ATTEMPTS: "2"
+        run: |
+          git fetch origin "${{ env.FORK_BRANCH }}"
+          git checkout "origin/${{ env.FORK_BRANCH }}" -- \
+            .github/scripts/upstream_sync_test_with_fixup.sh \
+            .github/scripts/upstream_sync_opencode_test_fix.sh \
+            .github/scripts/prompts/upstream_sync_opendbc_test_fix.txt 2>/dev/null || true
+          chmod +x .github/scripts/upstream_sync_test_with_fixup.sh .github/scripts/upstream_sync_opencode_test_fix.sh
+          bash .github/scripts/upstream_sync_test_with_fixup.sh \
+            'python -m compileall -q opendbc && chmod +x opendbc/safety/tests/test.sh && ./opendbc/safety/tests/test.sh' \
+            .github/scripts/prompts/upstream_sync_opendbc_test_fix.txt
+
+      - name: Push master-c3-new only
+        if: steps.merge.outcome == 'success'
+        run: |
+          git fetch origin "${{ env.FORK_BRANCH }}"
+          git checkout "origin/${{ env.FORK_BRANCH }}" -- .github/scripts/upstream_sync_push.sh .github/scripts/upstream_sync_open_pr.sh 2>/dev/null || true
+          bash .github/scripts/upstream_sync_push.sh
+
+      - name: Open draft PR master-c3-new to master-c3
+        if: steps.merge.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
+          SYNC_TEST_PASSED: ${{ steps.test.outcome == 'success' }}
+          SYNC_TEST_LOG: ${{ runner.temp }}/upstream_test.log
+        run: |
+          bash .github/scripts/upstream_sync_open_pr.sh \
+            "sync(opendbc) sunnypilot master to master-c3-new"
+
+      - name: Trigger panda sync
+        if: >-
+          steps.test.outcome == 'success' && (
+            github.event_name == 'schedule' ||
+            (github.event_name == 'workflow_dispatch' && inputs.trigger_panda) ||
+            github.event_name == 'repository_dispatch'
+          )
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
+          repository: mouxangithub/panda
+          event-type: upstream-sync-run
+
+      - name: Report sync status
+        if: always() && steps.merge.outcome == 'success'
+        run: |
+          if [[ "${{ steps.test.outcome }}" != "success" ]]; then
+            echo "::warning::Tests failed — master-c3-new pushed and draft PR opened for human review"
+            exit 1
+          fi
+          echo "Sync tests passed"

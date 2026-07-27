@@ -75,6 +75,14 @@ inline void m_update_binary_state(BinaryStateTracking *state) {
   state->previous = state->current;
 }
 
+// Toyota and other brands without a dedicated MADS safety button use ACC MAIN like
+// dp ALKA (lkas_on = acc_main_on): lateral follows MAIN level, not only the rising edge.
+static inline bool mads_acc_main_lateral_latch(void) {
+  return m_mads_state.system_enabled &&
+         m_mads_state.acc_main.current &&
+         (mads_button_press == MADS_BUTTON_UNAVAILABLE);
+}
+
 /**
  * @brief Updates the MADS control state based on current system conditions
  *
@@ -87,6 +95,11 @@ inline void m_update_control_state(void) {
   if ((m_mads_state.acc_main.transition == MADS_EDGE_RISING) ||
       (m_mads_state.mads_button.transition == MADS_EDGE_RISING) ||
       (m_mads_state.op_controls_allowed.transition == MADS_EDGE_RISING)) {
+    m_mads_state.controls_requested_lateral = true;
+  }
+
+  // MAIN held: keep requesting lateral (ALKA-style level latch, not only rising edge).
+  if (mads_acc_main_lateral_latch()) {
     m_mads_state.controls_requested_lateral = true;
   }
 
@@ -135,6 +148,11 @@ inline void m_update_control_state(void) {
 
 inline void mads_heartbeat_engaged_check(void) {
   if (controls_allowed_lateral && !heartbeat_engaged_mads) {
+    // MAIN-held latch brands: allow pandad heartbeat to catch up before revoking steer.
+    if (mads_acc_main_lateral_latch()) {
+      heartbeat_engaged_mads_mismatches = 0U;
+      return;
+    }
     heartbeat_engaged_mads_mismatches += 1U;
     if (heartbeat_engaged_mads_mismatches >= 3U) {
       mads_exit_controls(MADS_DISENGAGE_REASON_HEARTBEAT_ENGAGED_MISMATCH);

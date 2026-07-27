@@ -4,7 +4,7 @@ from opendbc.car.toyota.carcontroller import CarController
 from opendbc.car.toyota.radar_interface import RadarInterface
 from opendbc.car.toyota.values import Ecu, CAR, DBC, ToyotaFlags, CarControllerParams, TSS2_CAR, RADAR_ACC_CAR, NO_DSU_CAR, \
                                                   MIN_ACC_SPEED, EPS_SCALE, NO_STOP_TIMER_CAR, ANGLE_CONTROL_CAR, \
-                                                  ToyotaSafetyFlags, UNSUPPORTED_DSU_CAR
+                                                  ToyotaSafetyFlags, UNSUPPORTED_DSU_CAR, CanBus
 from opendbc.car.disable_ecu import disable_ecu
 from opendbc.car.interfaces import CarInterfaceBase
 from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP, ToyotaSafetyFlagsSP
@@ -26,21 +26,21 @@ class CarInterface(CarInterfaceBase):
   @staticmethod
   def _get_params(ret: structs.CarParams, candidate, fingerprint, car_fw, alpha_long, is_release, docs) -> structs.CarParams:
     ret.brand = "toyota"
-    ret.safetyConfigs = [get_safety_config(structs.CarParams.SafetyModel.toyota)]
-    ret.safetyConfigs[0].safetyParam = EPS_SCALE[candidate]
+    safety_configs = [get_safety_config(structs.CarParams.SafetyModel.toyota)]
+    safety_configs[0].safetyParam = EPS_SCALE[candidate]
 
     # BRAKE_MODULE is on a different address for these cars
     if DBC[candidate][Bus.pt] == "toyota_new_mc_pt_generated":
-      ret.safetyConfigs[0].safetyParam |= ToyotaSafetyFlags.ALT_BRAKE.value
+      safety_configs[0].safetyParam |= ToyotaSafetyFlags.ALT_BRAKE.value
 
     if ret.flags & ToyotaFlags.SECOC.value:
       ret.secOcRequired = True
-      ret.safetyConfigs[0].safetyParam |= ToyotaSafetyFlags.SECOC.value
+      safety_configs[0].safetyParam |= ToyotaSafetyFlags.SECOC.value
       ret.dashcamOnly = is_release
 
     if candidate in ANGLE_CONTROL_CAR:
       ret.steerControlType = SteerControlType.angle
-      ret.safetyConfigs[0].safetyParam |= ToyotaSafetyFlags.LTA.value
+      safety_configs[0].safetyParam |= ToyotaSafetyFlags.LTA.value
 
       # LTA control can be more delayed and winds up more often
       ret.steerActuatorDelay = 0.18
@@ -110,7 +110,7 @@ class CarInterface(CarInterfaceBase):
     ret.autoResumeSng = ret.openpilotLongitudinalControl and candidate in NO_STOP_TIMER_CAR
 
     if not ret.openpilotLongitudinalControl:
-      ret.safetyConfigs[0].safetyParam |= ToyotaSafetyFlags.STOCK_LONGITUDINAL.value
+      safety_configs[0].safetyParam |= ToyotaSafetyFlags.STOCK_LONGITUDINAL.value
 
     # min speed to enable ACC. if car can do stop and go, then set enabling speed
     # to a negative value, so it won't matter.
@@ -123,7 +123,19 @@ class CarInterface(CarInterfaceBase):
       if ret.flags & ToyotaFlags.HYBRID.value:
         ret.longitudinalActuatorDelay = 0.05
 
+    CAN = CanBus(fingerprint=fingerprint)
+    if CAN.pt >= 4:
+      safety_configs.insert(0, get_safety_config(structs.CarParams.SafetyModel.noOutput))
+
+    ret.safetyConfigs = safety_configs
+
     return ret
+
+  def _toyota_safety_config(cp: structs.CarParams):
+    for sc in cp.safetyConfigs:
+      if sc.safetyModel == structs.CarParams.SafetyModel.toyota:
+        return sc
+    raise ValueError("toyota safety config missing")
 
   @staticmethod
   def _get_params_sp(stock_cp: structs.CarParams, ret: structs.CarParamsSP, candidate, fingerprint: dict[int, dict[int, int]],
@@ -189,10 +201,11 @@ class CarInterface(CarInterfaceBase):
       ret.safetyParam |= ToyotaSafetyFlagsSP.GAS_INTERCEPTOR
       stock_cp.minEnableSpeed = -1.
 
+    toyota_safety = CarInterface._toyota_safety_config(stock_cp)
     if not stock_cp.openpilotLongitudinalControl:
-      stock_cp.safetyConfigs[0].safetyParam |= ToyotaSafetyFlags.STOCK_LONGITUDINAL.value
+      toyota_safety.safetyParam |= ToyotaSafetyFlags.STOCK_LONGITUDINAL.value
     else:
-      stock_cp.safetyConfigs[0].safetyParam &= ~ToyotaSafetyFlags.STOCK_LONGITUDINAL.value
+      toyota_safety.safetyParam &= ~ToyotaSafetyFlags.STOCK_LONGITUDINAL.value
 
     return ret
 

@@ -645,6 +645,33 @@ class MadsSafetyTestBase(unittest.TestCase):
     self.safety.tick_mads_state(False, False, False, False, False)
     self.assertTrue(self.safety.get_controls_allowed_lateral())
 
+  def test_acc_main_lateral_latch_reengages_while_main_held(self):
+    """MAIN level latch re-requests lateral after a drop while MAIN stays on."""
+    self.safety.set_mads_params(True, False, False)
+    self.safety.set_acc_main_on(True)
+    self.safety.tick_mads_state(False, True, False, False, False)
+    self.assertTrue(self.safety.get_controls_allowed_lateral())
+
+    # Simulate lateral cleared (e.g. lag/heartbeat) while MAIN remains on.
+    self.safety.set_controls_allowed_lateral(False)
+    self.safety.set_heartbeat_engaged_mads(False)
+    self.safety.tick_mads_state(False, True, False, False, False)
+    self.assertTrue(self.safety.get_controls_allowed_lateral(),
+                    "MAIN held should re-engage lateral without a new rising edge")
+
+  def test_acc_main_lateral_latch_heartbeat_grace(self):
+    """MAIN-held brands tolerate heartbeat catch-up without revoking steer."""
+    self.safety.set_mads_params(True, False, False)
+    self.safety.set_acc_main_on(True)
+    self.safety.tick_mads_state(False, True, False, False, False)
+    self.assertTrue(self.safety.get_controls_allowed_lateral())
+
+    self.safety.set_heartbeat_engaged_mads(False)
+    for _ in range(4):
+      self.safety.mads_heartbeat_engaged_check()
+    self.assertTrue(self.safety.get_controls_allowed_lateral(),
+                    "Heartbeat mismatch should be ignored while MAIN is held")
+
   def test_alt_exp_bit_discrimination(self):
     self.safety.mads_apply_alternative_experience(1)
     self.assertFalse(self.safety.get_enable_mads())
