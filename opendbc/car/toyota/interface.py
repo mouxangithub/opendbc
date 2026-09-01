@@ -3,12 +3,29 @@ from opendbc.car.toyota.carstate import CarState
 from opendbc.car.toyota.carcontroller import CarController
 from opendbc.car.toyota.radar_interface import RadarInterface
 from opendbc.car.toyota.values import Ecu, CAR, DBC, ToyotaFlags, CarControllerParams, TSS2_CAR, RADAR_ACC_CAR, NO_DSU_CAR, \
-                                                  MIN_ACC_SPEED, EPS_SCALE, NO_STOP_TIMER_CAR, ToyotaSafetyFlags, UNSUPPORTED_DSU_CAR
+                                                  MIN_ACC_SPEED, EPS_SCALE, NO_STOP_TIMER_CAR, ToyotaSafetyFlags, UNSUPPORTED_DSU_CAR, CanBus
 from opendbc.car.disable_ecu import disable_ecu
 from opendbc.car.interfaces import CarInterfaceBase
 from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP, ToyotaSafetyFlagsSP
 
 SteerControlType = structs.CarParams.SteerControlType
+
+
+def _toyota_can_bus(fingerprint=None, CP=None):
+  return CanBus(CP, fingerprint)
+
+
+def _toyota_pt_fingerprint(fingerprint, CP=None):
+  return fingerprint.get(_toyota_can_bus(fingerprint, CP).pt, {})
+
+
+def _toyota_fp_has(fingerprint, addr, CP=None):
+  return addr in _toyota_pt_fingerprint(fingerprint, CP)
+
+
+def _toyota_fp_has_on_buses(fingerprint, addr, CP=None):
+  can = _toyota_can_bus(fingerprint, CP)
+  return any(addr in fingerprint.get(bus, {}) for bus in (can.pt, can.alt, can.cam))
 
 
 class CarInterface(CarInterfaceBase):
@@ -25,21 +42,21 @@ class CarInterface(CarInterfaceBase):
   @staticmethod
   def _get_params(ret: structs.CarParams, candidate, fingerprint, car_fw, alpha_long, is_release, docs) -> structs.CarParams:
     ret.brand = "toyota"
-    ret.safetyConfigs = [get_safety_config(structs.CarParams.SafetyModel.toyota)]
-    ret.safetyConfigs[0].safetyParam = EPS_SCALE[candidate]
+    safety_configs = [get_safety_config(structs.CarParams.SafetyModel.toyota)]
+    safety_configs[0].safetyParam = EPS_SCALE[candidate]
 
     # BRAKE_MODULE is on a different address for these cars
     if DBC[candidate][Bus.pt] == "toyota_new_mc_pt_generated":
-      ret.safetyConfigs[0].safetyParam |= ToyotaSafetyFlags.ALT_BRAKE.value
+      safety_configs[0].safetyParam |= ToyotaSafetyFlags.ALT_BRAKE.value
 
     if ret.flags & ToyotaFlags.SECOC.value:
       ret.secOcRequired = True
-      ret.safetyConfigs[0].safetyParam |= ToyotaSafetyFlags.SECOC.value
+      safety_configs[0].safetyParam |= ToyotaSafetyFlags.SECOC.value
       ret.dashcamOnly = is_release
 
     if ret.flags & ToyotaFlags.ANGLE_CONTROL:
       ret.steerControlType = SteerControlType.angle
-      ret.safetyConfigs[0].safetyParam |= ToyotaSafetyFlags.LTA.value
+      safety_configs[0].safetyParam |= ToyotaSafetyFlags.LTA.value
 
       # LTA control can be more delayed and winds up more often
       ret.steerActuatorDelay = 0.18
@@ -81,9 +98,8 @@ class CarInterface(CarInterfaceBase):
 
     ret.centerToFront = ret.wheelbase * 0.44
 
-    # TODO: Some TSS-P platforms have BSM, but are flipped based on region or driving direction.
-    # Detect flipped signals and enable for C-HR and others
-    ret.enableBsm = 0x3F6 in fingerprint[0] and bool(ret.flags & ToyotaFlags.TSS2)
+    # BSM (0x3F6) is on the pt bus; with dual Panda (e.g. C3 DOS + USB red panda) pt is bus 4, not 0.
+    ret.enableBsm = _toyota_fp_has(fingerprint, 0x3F6) and bool(ret.flags & ToyotaFlags.TSS2)
 
     # No radar dbc for cars without DSU which are not TSS 2.0
     # TODO: make an adas dbc file for dsu-less models
@@ -109,7 +125,7 @@ class CarInterface(CarInterfaceBase):
     ret.autoResumeSng = ret.openpilotLongitudinalControl and candidate in NO_STOP_TIMER_CAR
 
     if not ret.openpilotLongitudinalControl:
-      ret.safetyConfigs[0].safetyParam |= ToyotaSafetyFlags.STOCK_LONGITUDINAL.value
+      safety_configs[0].safetyParam |= ToyotaSafetyFlags.STOCK_LONGITUDINAL.value
 
     # min speed to enable ACC. if car can do stop and go, then set enabling speed
     # to a negative value, so it won't matter.
@@ -122,7 +138,19 @@ class CarInterface(CarInterfaceBase):
       if ret.flags & ToyotaFlags.HYBRID.value:
         ret.longitudinalActuatorDelay = 0.05
 
+    CAN = CanBus(None, fingerprint)
+    if CAN.pt >= 4:
+      safety_configs.insert(0, get_safety_config(structs.CarParams.SafetyModel.noOutput))
+
+    ret.safetyConfigs = safety_configs
+
     return ret
+
+  def _toyota_safety_config(cp: structs.CarParams):
+    for sc in cp.safetyConfigs:
+      if sc.safetyModel == structs.CarParams.SafetyModel.toyota:
+        return sc
+    raise ValueError("toyota safety config missing")
 
   @staticmethod
   def _get_params_sp(stock_cp: structs.CarParams, ret: structs.CarParamsSP, candidate, fingerprint: dict[int, dict[int, int]],
@@ -132,15 +160,15 @@ class CarInterface(CarInterfaceBase):
 
     # Detect smartDSU, which intercepts ACC_CMD from the DSU (or radar) allowing openpilot to send it
     # 0x2AA is sent by a similar device which intercepts the radar instead of DSU on NO_DSU_CARs
-    if 0x2FF in fingerprint[0] or (0x2AA in fingerprint[0] and candidate in NO_DSU_CAR):
+    if _toyota_fp_has(fingerprint, 0x2FF) or (_toyota_fp_has_on_buses(fingerprint, 0x2AA) and candidate in NO_DSU_CAR):
       ret.flags |= ToyotaFlagsSP.SMART_DSU.value
 
-    if 0x2AA in fingerprint[0] and candidate in NO_DSU_CAR:
+    if _toyota_fp_has_on_buses(fingerprint, 0x2AA) and candidate in NO_DSU_CAR:
       ret.flags |= ToyotaFlagsSP.RADAR_CAN_FILTER.value
 
     # Detect ZSS, which allows sunnypilot to utilize an improved angle sensor for some Toyota vehicles
     # https://github.com/zorrobyte/betterToyotaAngleSensorForOP
-    if 0x23 in fingerprint[0] and not stock_cp.flags & ToyotaFlags.SECOC:
+    if _toyota_fp_has(fingerprint, 0x23) and not stock_cp.flags & ToyotaFlags.SECOC:
       ret.flags |= ToyotaFlagsSP.ZSS.value
 
     if candidate == CAR.TOYOTA_PRIUS:
@@ -181,17 +209,18 @@ class CarInterface(CarInterfaceBase):
       candidate in (TSS2_CAR - RADAR_ACC_CAR) or \
       bool(stock_cp.flags & ToyotaFlags.DISABLE_RADAR)
 
-    ret.enableGasInterceptor = 0x201 in fingerprint[0] and stock_cp.openpilotLongitudinalControl and \
+    ret.enableGasInterceptor = _toyota_fp_has(fingerprint, 0x201) and stock_cp.openpilotLongitudinalControl and \
                                not stock_cp.flags & ToyotaFlags.SECOC
 
     if ret.enableGasInterceptor:
       ret.safetyParam |= ToyotaSafetyFlagsSP.GAS_INTERCEPTOR
       stock_cp.minEnableSpeed = -1.
 
+    toyota_safety = CarInterface._toyota_safety_config(stock_cp)
     if not stock_cp.openpilotLongitudinalControl:
-      stock_cp.safetyConfigs[0].safetyParam |= ToyotaSafetyFlags.STOCK_LONGITUDINAL.value
+      toyota_safety.safetyParam |= ToyotaSafetyFlags.STOCK_LONGITUDINAL.value
     else:
-      stock_cp.safetyConfigs[0].safetyParam &= ~ToyotaSafetyFlags.STOCK_LONGITUDINAL.value
+      toyota_safety.safetyParam &= ~ToyotaSafetyFlags.STOCK_LONGITUDINAL.value
 
     return ret
 
@@ -201,7 +230,7 @@ class CarInterface(CarInterfaceBase):
     if CP.flags & ToyotaFlags.DISABLE_RADAR.value:
       if communication_control is None:
         communication_control = bytes([uds.SERVICE_TYPE.COMMUNICATION_CONTROL, uds.CONTROL_TYPE.ENABLE_RX_DISABLE_TX, uds.MESSAGE_TYPE.NORMAL])
-      disable_ecu(can_recv, can_send, bus=0, addr=0x750, sub_addr=0xf, com_cont_req=communication_control)
+      disable_ecu(can_recv, can_send, bus=CanBus(CP).pt, addr=0x750, sub_addr=0xf, com_cont_req=communication_control)
 
   @staticmethod
   def deinit(CP, can_recv, can_send):
