@@ -107,7 +107,7 @@ def _build_cars_table(all_car_docs: list[CarDocs], **kwargs) -> tuple[str, str, 
 
 # CAUTION: This function is imported by shop.comma.ai and comma.ai/vehicles, test changes carefully
 def generate_cars_md(all_car_docs: list[CarDocs], template_fn: str, **kwargs) -> str:
-  with open(template_fn) as f:
+  with open(template_fn, encoding='utf-8') as f:
     template = Template(f.read())
 
   table_header, table_separator, table_rows = _build_cars_table(all_car_docs, **kwargs)
@@ -129,6 +129,6 @@ if __name__ == "__main__":
   parser.add_argument("--out", default=EXTRA_CARS_MD_OUT, help="Override default generated filename")
   args = parser.parse_args()
 
-  with open(args.out, 'w') as f:
+  with open(args.out, 'w', encoding='utf-8') as f:
     f.write(generate_cars_md(get_all_car_docs(), args.template))
   print(f"Generated and written to {args.out}")

@@ -347,9 +347,6 @@ class CarController(CarControllerBase, GasInterceptorCarController):
     if self.enhanced_bsm.enabled:
       can_sends.extend(self.enhanced_bsm.update(CS, self.frame))
 
-    if self.enhanced_bsm.enabled:
-      can_sends.extend(self.enhanced_bsm.update(CS, self.frame))
-
     new_actuators = actuators.as_builder()
     new_actuators.torque = apply_torque / self.params.STEER_MAX
     new_actuators.torqueOutputCan = apply_torque
