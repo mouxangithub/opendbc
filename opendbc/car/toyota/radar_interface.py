@@ -2,11 +2,11 @@
 from opendbc.can import CANParser
 from opendbc.car import Bus
 from opendbc.car.structs import RadarData
-from opendbc.car.toyota.values import DBC, ToyotaFlags
+from opendbc.car.toyota.values import DBC, ToyotaFlags, CanBus
 from opendbc.car.interfaces import RadarInterfaceBase
 
 
-def _create_radar_can_parser(CP):
+def _create_radar_can_parser(CP, bus=1):
   if CP.flags & ToyotaFlags.TSS2:
     RADAR_A_MSGS = list(range(0x180, 0x190))
     RADAR_B_MSGS = list(range(0x190, 0x1a0))
@@ -20,7 +20,7 @@ def _create_radar_can_parser(CP):
 
   messages.append(('STATUS_MSG', 10))
 
-  return CANParser(DBC[CP.carFingerprint][Bus.radar], messages, 1)
+  return CANParser(DBC[CP.carFingerprint][Bus.radar], messages, bus)
 
 
 class RadarInterface(RadarInterfaceBase):
@@ -36,7 +36,7 @@ class RadarInterface(RadarInterfaceBase):
 
     self.valid_cnt = {key: 0 for key in self.RADAR_A_MSGS}
 
-    self.rcp = None if CP.radarUnavailable else _create_radar_can_parser(CP)
+    self.rcp = None if CP.radarUnavailable else _create_radar_can_parser(CP, CanBus(CP).alt)
     self.trigger_msg = self.RADAR_B_MSGS[-1]
     self.updated_messages = set()
 
