@@ -15,10 +15,6 @@ ButtonType = structs.CarState.ButtonEvent.Type
 
 
 class MadsCarState(MadsCarStateBase):
-  def __init__(self, CP: structs.CarParams, CP_SP: structs.CarParamsSP):
-    super().__init__(CP, CP_SP)
-    self.main_cruise_button = 0
-
   def update_mads(self, ret: structs.CarState, can_parsers: dict[StrEnum, CANParser]) -> None:
     cp = can_parsers[Bus.pt]
 
@@ -26,7 +22,12 @@ class MadsCarState(MadsCarStateBase):
     # BYD does not expose a dedicated LKAS button on the steering wheel.
     # The ACC main switch is reused to report cruise availability; treat it
     # as the MADS toggle input so sunnypilot's MADS state machine can latch.
-    self.lkas_button = cp.vl["PCM_BUTTONS"]["BTN_TOGGLE_ACC_OnOff"]
+    # Legacy byd_han_dmev_2020.dbc names it BTN_TOGGLE_ACC_OnOff; the ATTO3
+    # byd_general.dbc names it ACC_ON_BTN.
+    try:
+      self.lkas_button = cp.vl["PCM_BUTTONS"]["BTN_TOGGLE_ACC_OnOff"]
+    except KeyError:
+      self.lkas_button = cp.vl["PCM_BUTTONS"]["ACC_ON_BTN"]
 
     # If desired, map rising/falling edges of the ACC main switch to a
     # mainCruise button event. Stock CarState already emits cancel/resume/gap

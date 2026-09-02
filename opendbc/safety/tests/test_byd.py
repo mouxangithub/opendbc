@@ -14,6 +14,7 @@ BYD_FLAG_TANG_DMI = 0x2
 BYD_FLAG_SONG_PLUS_DMI = 0x4
 BYD_FLAG_QIN_PLUS_DMI = 0x8
 BYD_FLAG_YUAN_PLUS_DMI_ATTO3 = 0x10
+BYD_FLAG_ATTO3_GENERAL = 0x20
 
 BYD_COMMON_TX_MSGS = [
   [0x32E, BYD_CANBUS_ESC],  # ACC_CMD
@@ -26,6 +27,17 @@ BYD_FWD_BLACKLISTED_ADDRS = {
   BYD_CANBUS_ESC: [0x318],
   BYD_CANBUS_MPC: [0x316, 0x32E],
 }
+
+BYD_ATTO3_GENERAL_TX_MSGS = [
+  [0x1E2, BYD_CANBUS_ESC],  # STEERING_MODULE_ADAS
+  [0x316, BYD_CANBUS_ESC],  # LKAS_HUD_ADAS
+]
+
+BYD_ATTO3_RELAY_MALFUNCTION_ADDRS = {BYD_CANBUS_ESC: (0x1E2,)}
+BYD_ATTO3_FWD_BLACKLISTED_ADDRS = {
+  BYD_CANBUS_MPC: [0x1E2, 0x316],
+}
+BYD_ATTO3_FWD_BUS_LOOKUP = {BYD_CANBUS_ESC: BYD_CANBUS_MPC, BYD_CANBUS_MPC: BYD_CANBUS_ESC}
 
 
 class BydSafetyBase(common.CarSafetyTest, common.MotorTorqueSteeringSafetyTest):
@@ -86,7 +98,9 @@ class BydSafetyBase(common.CarSafetyTest, common.MotorTorqueSteeringSafetyTest):
     raise NotImplementedError
 
   def _acc_state_msg(self, enabled):
-    raise NotImplementedError
+    # AccState=2 is ACC_ON (main switch on, not yet active), which sets acc_main_on without engaging cruise
+    values = {"AccState": 2 if enabled else 0}
+    return self.packer.make_can_msg_safety("ACC_HUD_ADAS", BYD_CANBUS_MPC, values)
 
 
 class TestBydSafety(BydSafetyBase):
@@ -125,18 +139,81 @@ class TestBydSafety(BydSafetyBase):
   def test_qin_plus_dmi_safety_config(self):
     self._assert_platform_torque_allowed(BYD_FLAG_QIN_PLUS_DMI)
 
-  def test_yuan_plus_atto3_safety_config(self):
-    self._switch_platform(BYD_FLAG_YUAN_PLUS_DMI_ATTO3)
-    self.safety.set_controls_allowed(True)
-    self._set_prev_torque(self.MAX_TORQUE)
-    self.assertTrue(self._tx(self._torque_cmd_msg(self.MAX_TORQUE)))
-
   def test_default_safety_config(self):
     # param = 0 falls back to the HAN/Tang DM-i config
     self._switch_platform(0)
     self.safety.set_controls_allowed(True)
     self._set_prev_torque(self.MAX_TORQUE)
     self.assertTrue(self._tx(self._torque_cmd_msg(self.MAX_TORQUE)))
+
+
+class BydAtto3GeneralSafetyBase(common.CarSafetyTest, common.AngleSteeringSafetyTest):
+  TX_MSGS = BYD_ATTO3_GENERAL_TX_MSGS
+  RELAY_MALFUNCTION_ADDRS = BYD_ATTO3_RELAY_MALFUNCTION_ADDRS
+  FWD_BLACKLISTED_ADDRS = BYD_ATTO3_FWD_BLACKLISTED_ADDRS
+  FWD_BUS_LOOKUP = BYD_ATTO3_FWD_BUS_LOOKUP
+
+  # Angle control limits (mirror CarControllerParams.ANGLE_LIMITS)
+  STEER_ANGLE_MAX = 90
+  DEG_TO_CAN = 10
+
+  ANGLE_RATE_BP = [0., 5., 25.]
+  ANGLE_RATE_UP = [2.5, 1.5, 0.4]   # windup limit per message (50 Hz)
+  ANGLE_RATE_DOWN = [2.5, 1.5, 0.6]  # unwind limit per message (50 Hz)
+
+  LATERAL_FREQUENCY = 50
+
+  FLAGS = BYD_FLAG_ATTO3_GENERAL
+
+  def setUp(self):
+    self.packer = CANPackerSafety("byd_general")
+    self.safety = libsafety_py.libsafety
+    self.safety.set_safety_hooks(CarParams.SafetyModel.byd, self.FLAGS)
+    self.safety.init_tests()
+    super().setUp()
+
+  def _angle_cmd_msg(self, angle: float, enabled: bool, increment_timer: bool = True):
+    values = {"STEER_ANGLE": angle, "STEER_REQ": 1 if enabled else 0}
+    return self.packer.make_can_msg_safety("STEERING_MODULE_ADAS", BYD_CANBUS_ESC, values)
+
+  def _angle_meas_msg(self, angle: float):
+    values = {"STEER_ANGLE_2": angle}
+    return self.packer.make_can_msg_safety("STEER_MODULE_2", BYD_CANBUS_ESC, values)
+
+  def _speed_msg(self, speed):
+    values = {"WHEELSPEED_%s" % s: float(speed * 3.6 * 10) for s in ["FL", "FR", "BL", "BR"]}
+    return self.packer.make_can_msg_safety("WHEEL_SPEED", BYD_CANBUS_ESC, values)
+
+  def _speed_msg_2(self, speed: float):
+    return None
+
+  def _user_brake_msg(self, brake):
+    values = {"BRAKE_PEDAL": int(brake)}
+    return self.packer.make_can_msg_safety("PEDAL", BYD_CANBUS_ESC, values)
+
+  def _user_gas_msg(self, gas):
+    values = {"GAS_PEDAL": int(gas)}
+    return self.packer.make_can_msg_safety("PEDAL", BYD_CANBUS_ESC, values)
+
+  def _pcm_status_msg(self, enable):
+    values = {"ACC_ON_1": int(enable), "ACC_ON_2": int(enable), "CMD_REQ_ACTIVE_LOW": int(not enable)}
+    return self.packer.make_can_msg_safety("ACC_CMD", BYD_CANBUS_MPC, values)
+
+  # MADS button / ACC main are not wired up for BYD; leave abstract to skip those tests
+  def _lkas_button_msg(self, enabled):
+    raise NotImplementedError
+
+  def _acc_state_msg(self, enabled):
+    values = {"ACC_ON1": int(enabled), "ACC_ON2": int(enabled)}
+    return self.packer.make_can_msg_safety("ACC_HUD_ADAS", BYD_CANBUS_MPC, values)
+
+
+class TestBydAtto3GeneralSafety(BydAtto3GeneralSafetyBase):
+  pass
+
+
+class TestBydYuanPlusAtto3Safety(BydAtto3GeneralSafetyBase):
+  FLAGS = BYD_FLAG_YUAN_PLUS_DMI_ATTO3
 
 
 if __name__ == "__main__":

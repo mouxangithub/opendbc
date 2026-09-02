@@ -5,10 +5,7 @@ This file is part of sunnypilot and is licensed under the MIT License.
 See the LICENSE.md file in the root directory for more details.
 """
 
-from enum import StrEnum
-
-from opendbc.car import Bus, structs
-from opendbc.can.parser import CANParser
+from opendbc.car import structs
 
 
 class CarStateExt:
@@ -16,10 +13,7 @@ class CarStateExt:
     self.CP = CP
     self.CP_SP = CP_SP
 
-  def update(self, ret: structs.CarState, ret_sp: structs.CarStateSP, can_parsers: dict[StrEnum, CANParser]) -> None:
-    cp = can_parsers[Bus.pt]
-    cp_cam = can_parsers[Bus.cam]
-
-    # BYD does not currently expose speed-limit data on CAN, so keep the field
-    # at its default 0 until a validated signal is identified per platform.
+  def update(self, ret: structs.CarState, ret_sp: structs.CarStateSP, can_parsers) -> None:
+    # Speed-limit data is not available on BYD CAN for any validated platform.
+    # CarStateSP defaults to 0; explicitly keep it cleared.
     ret_sp.speedLimit = 0.0

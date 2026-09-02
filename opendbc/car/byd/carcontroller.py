@@ -1,10 +1,10 @@
 import numpy as np
 from opendbc.can.packer import CANPacker
 from opendbc.car import Bus, structs
-from opendbc.car.lateral import apply_driver_steer_torque_limits
+from opendbc.car.lateral import apply_driver_steer_torque_limits, apply_std_steer_angle_limits
 from opendbc.car.interfaces import CarControllerBase
 from opendbc.car.byd import bydcan
-from opendbc.car.byd.values import CarControllerParams
+from opendbc.car.byd.values import CarControllerParams, PLATFORM_ATTO3_GENERAL
 
 VisualAlert = structs.CarControl.HUDControl.VisualAlert
 ButtonType = structs.CarState.ButtonEvent.Type
@@ -17,6 +17,8 @@ MAX_STEER_FRAMES_WITHOUT_SYNC = 32  # ~640ms at 50Hz (STEER_STEP=2)
 class CarController(CarControllerBase):
   def __init__(self, dbc_names, CP, CP_SP):
     super().__init__(dbc_names, CP, CP_SP)
+
+    self.is_atto3_general = CP.carFingerprint in PLATFORM_ATTO3_GENERAL
 
     self.packer = CANPacker(dbc_names[Bus.pt])
 
@@ -42,7 +44,59 @@ class CarController(CarControllerBase):
 
     self.apply_accel_last = 0
 
-  def update(self, CC, CC_SP, CS, now_nanos):
+    # ATTO3 state
+    self.atto3_apply_angle_last = 0.0
+    self.atto3_acc_idx = 0
+
+  def _update_atto3(self, CC, CC_SP, CS, now_nanos):
+    actuators = CC.actuators
+    hud_control = CC.hudControl
+    pcm_cancel_cmd = CC.cruiseControl.cancel
+
+    can_sends = []
+
+    if self.frame % CarControllerParams.STEER_STEP == 0:
+      apply_angle = apply_std_steer_angle_limits(actuators.steeringAngleDeg, self.atto3_apply_angle_last,
+                                                 CS.out.vEgoRaw, CS.out.steeringAngleDeg,
+                                                 CC.latActive, CarControllerParams.ANGLE_LIMITS)
+
+      if CS.out.steeringTorque > CarControllerParams.STEER_DRIVER_ALLOWANCE_ANGLE:
+        apply_angle = CS.out.steeringAngleDeg
+
+      apply_angle = float(np.clip(apply_angle,
+                                  CS.out.steeringAngleDeg - CarControllerParams.MAX_ANGLE_ERROR,
+                                  CS.out.steeringAngleDeg + CarControllerParams.MAX_ANGLE_ERROR))
+
+      self.atto3_apply_angle_last = apply_angle
+
+      if CC.latActive:
+        template = CS.atto3_steer_template or bydcan.ATTO3_STEER_TEMPLATE_DEFAULT
+        can_sends.append(bydcan.atto3_create_steering_control(self.packer, apply_angle, template,
+                                                              self.frame // CarControllerParams.STEER_STEP))
+        can_sends.append(bydcan.atto3_create_lkas_hud(self.packer, CS.atto3_lkas_hud,
+                                                      self.frame // CarControllerParams.STEER_STEP))
+
+    if self.CP.openpilotLongitudinalControl:
+      if self.frame % CarControllerParams.STEER_STEP == 0:
+        accel = float(np.clip(actuators.accel, CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX))
+        if not CC.longActive or pcm_cancel_cmd:
+          accel = 0.0
+
+        can_sends.append(bydcan.atto3_create_acc_control(self.packer, accel,
+                                                         CC.longActive and not pcm_cancel_cmd, self.atto3_acc_idx))
+
+        set_speed = hud_control.setSpeed if hud_control.setSpeed > 0 else CS.out.cruiseState.speed
+        can_sends.append(bydcan.atto3_create_acc_hud(self.packer, CC.enabled, set_speed * 3.6,
+                                                     hud_control.leadVisible, self.atto3_acc_idx))
+        self.atto3_acc_idx += 1
+
+    new_actuators = actuators.as_builder()
+    new_actuators.steeringAngleDeg = self.atto3_apply_angle_last
+
+    self.frame += 1
+    return new_actuators, can_sends
+
+  def _update_legacy(self, CC, CC_SP, CS, now_nanos):
     can_sends = []
 
     # Check if we need to re-sync counters (e.g., after communication interruption)
@@ -175,3 +229,8 @@ class CarController(CarControllerBase):
 
     self.frame += 1
     return new_actuators, can_sends
+
+  def update(self, CC, CC_SP, CS, now_nanos):
+    if self.is_atto3_general:
+      return self._update_atto3(CC, CC_SP, CS, now_nanos)
+    return self._update_legacy(CC, CC_SP, CS, now_nanos)

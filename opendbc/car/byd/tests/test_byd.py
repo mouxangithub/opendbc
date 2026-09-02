@@ -4,9 +4,10 @@ from opendbc.car import Bus, gen_empty_fingerprint
 from opendbc.car import structs
 from opendbc.car.structs import CarParams
 from opendbc.car.byd.interface import CarInterface
-from opendbc.car.byd.values import CAR, DBC, CanBus, BydSafetyFlags
+from opendbc.car.byd.values import CAR, DBC, CanBus, BydSafetyFlags, PLATFORM_ATTO3_GENERAL
 from opendbc.car.byd.fingerprints import FINGERPRINTS, FW_VERSIONS
-from opendbc.car.byd.bydcan import create_steering_control, acc_cmd, create_fake_318
+from opendbc.car import create_button_events
+from opendbc.car.byd.bydcan import create_steering_control, acc_cmd, create_fake_318, byd_checksum
 from opendbc.car.byd.carstate import CarState
 from opendbc.can.packer import CANPacker
 
@@ -37,6 +38,8 @@ class TestBydFingerprint(unittest.TestCase):
         expected_flag = BydSafetyFlags.QIN_PLUS_DMI
       elif car_model == CAR.BYD_YUAN_PLUS_DMI_22:
         expected_flag = BydSafetyFlags.YUAN_PLUS_DMI_ATTO3
+      elif car_model in PLATFORM_ATTO3_GENERAL:
+        expected_flag = BydSafetyFlags.ATTO3_GENERAL
 
       assert CP.safetyConfigs[0].safetyParam & expected_flag == expected_flag, f"{car_model}: missing safety flag"
 
@@ -46,8 +49,8 @@ class TestBydFingerprint(unittest.TestCase):
 
   def test_fw_versions_placeholder(self):
     # BYD FW_VERSIONS currently only contains a placeholder; ensure it parses
-    for car_model, ecus in FW_VERSIONS.items():
-      for ecu, fws in ecus.items():
+    for _car_model, ecus in FW_VERSIONS.items():
+      for _ecu, fws in ecus.items():
         assert len(fws) > 0
         for fw in fws:
           assert isinstance(fw, bytes)
@@ -141,6 +144,52 @@ class TestBydCan(unittest.TestCase):
     assert msg[0] == 0x318  # ACC_EPS_STATE address
     assert len(msg[1]) == 8
     assert msg[2] == CanBus.MPC
+
+
+class TestBydChecksum(unittest.TestCase):
+  def test_byd_checksum(self):
+    # Checksum is the last byte; for an all-zero payload with key 0xAF the
+    # checksum should be deterministic and in range.
+    dat = bytes([0] * 8)
+    chk = byd_checksum(0xAF, dat)
+    assert 0 <= chk <= 0xFF
+
+    # Modifying any byte should change the checksum
+    dat2 = bytearray(dat)
+    dat2[0] = 1
+    chk2 = byd_checksum(0xAF, bytes(dat2))
+    assert chk != chk2
+
+
+class TestBydButtons(unittest.TestCase):
+  def test_cancel_button_event(self):
+    events = create_button_events(1, 0, {1: structs.CarState.ButtonEvent.Type.cancel})
+    assert len(events) == 1
+    assert events[0].pressed is True
+    assert events[0].type == structs.CarState.ButtonEvent.Type.cancel
+
+  def test_no_duplicate_events(self):
+    # No transition -> no event
+    events = create_button_events(0, 0, {1: structs.CarState.ButtonEvent.Type.cancel})
+    assert len(events) == 0
+
+
+class TestBydCarState(unittest.TestCase):
+  def test_get_can_parsers(self):
+    CP = CarInterface.get_params(CAR.BYD_HAN_DM_20, gen_empty_fingerprint(), [], False, False, False)
+    parsers = CarState.get_can_parsers(CP, None)
+    assert Bus.pt in parsers
+    assert Bus.cam in parsers
+    assert parsers[Bus.pt].bus == CanBus.ESC
+    assert parsers[Bus.cam].bus == CanBus.MPC
+
+  def test_get_can_parsers_atto3(self):
+    CP = CarInterface.get_params(CAR.BYD_ATTO3, gen_empty_fingerprint(), [], False, False, False)
+    parsers = CarState.get_can_parsers(CP, None)
+    assert Bus.pt in parsers
+    assert Bus.cam in parsers
+    assert parsers[Bus.pt].bus == CanBus.ESC
+    assert parsers[Bus.cam].bus == CanBus.MPC
 
 
 if __name__ == "__main__":

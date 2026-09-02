@@ -7,7 +7,8 @@ from opendbc.car import get_safety_config, structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.interfaces import CarInterfaceBase, TorqueFromLateralAccelCallbackType, LateralAccelFromTorqueCallbackType
 from opendbc.car.byd.values import CAR, CanBus, BydSafetyFlags, MPC_ACC_CAR, TORQUE_LAT_CAR, EXP_LONG_CAR, \
-                                PLATFORM_HANTANG_DMEV, PLATFORM_TANG_DMI, PLATFORM_SONG_PLUS_DMI, PLATFORM_QIN_PLUS_DMI, PLATFORM_YUAN_PLUS_DMI_ATTO3
+                                PLATFORM_HANTANG_DMEV, PLATFORM_TANG_DMI, PLATFORM_SONG_PLUS_DMI, \
+                                PLATFORM_QIN_PLUS_DMI, PLATFORM_ATTO3_GENERAL
 from opendbc.car.byd.carcontroller import CarController
 from opendbc.car.byd.carstate import CarState
 from opendbc.car.byd.radar_interface import RadarInterface
@@ -24,6 +25,7 @@ NON_LINEAR_TORQUE_PARAMS = {
 
 import os
 BYD_RADAR = os.getenv("BYD_RADAR") is not None
+
 
 class CarInterface(CarInterfaceBase):
     CarState = CarState
@@ -75,7 +77,7 @@ class CarInterface(CarInterfaceBase):
         return self.lateral_accel_from_torque_linear
 
     @staticmethod
-    def _get_params(ret: structs.CarParams, candidate, fingerprint, car_fw, alpha_long, is_release, docs) -> structs.CarParams: # type: ignore
+    def _get_params(ret: structs.CarParams, candidate, fingerprint, car_fw, alpha_long, is_release, docs) -> structs.CarParams:
         ret.brand = "byd"
         ret.safetyConfigs = [get_safety_config(structs.CarParams.SafetyModel.byd)]
 
@@ -104,12 +106,32 @@ class CarInterface(CarInterfaceBase):
             ret.safetyConfigs[0].safetyParam |= BydSafetyFlags.SONG_PLUS_DMI.value
         elif candidate in PLATFORM_QIN_PLUS_DMI:
             ret.safetyConfigs[0].safetyParam |= BydSafetyFlags.QIN_PLUS_DMI.value
-        elif candidate in PLATFORM_YUAN_PLUS_DMI_ATTO3:
+        elif candidate == CAR.BYD_YUAN_PLUS_DMI_22:
             ret.safetyConfigs[0].safetyParam |= BydSafetyFlags.YUAN_PLUS_DMI_ATTO3.value
+        elif candidate == CAR.BYD_ATTO3:
+            ret.safetyConfigs[0].safetyParam |= BydSafetyFlags.ATTO3_GENERAL.value
 
         if candidate in MPC_ACC_CAR:
             ret.networkLocation = NetworkLocation.fwdCamera
 
+        # --- ATTO3 angle-control platform (byd_general.dbc) ---
+        if candidate in PLATFORM_ATTO3_GENERAL:
+            ret.steerControlType = structs.CarParams.SteerControlType.angle
+            # Measured on the car: the EPS follows with ~0.3-0.8 s of lag.
+            ret.steerActuatorDelay = 0.35
+            ret.steerLimitTimer = 0.4
+            ret.minSteerSpeed = 0.
+            ret.minEnableSpeed = -1.
+            ret.pcmCruise = True
+            ret.openpilotLongitudinalControl = False
+            ret.radarUnavailable = True
+            ret.networkLocation = NetworkLocation.fwdCamera
+
+            ret.longitudinalTuning.kiBP = [0., 35.]
+            ret.longitudinalTuning.kiV = [0.18, 0.12]
+            return ret
+
+        # --- existing torque/pid platforms (byd_han_dmev_2020.dbc) ---
         use_torque_lat = candidate in TORQUE_LAT_CAR
 
         if use_torque_lat:
@@ -130,7 +152,10 @@ class CarInterface(CarInterfaceBase):
 
         # model specific parameters
         # Todo: Developers please fill or add more models.
-        if candidate in (CAR.BYD_HAN_DM_20, CAR.BYD_HAN_EV_20, CAR.BYD_TANG_DM, CAR.BYD_SONG_PLUS_DMI_21):
+        # Enable only platforms that have been validated with real vehicle data.
+        if candidate in (CAR.BYD_HAN_DM_20, CAR.BYD_HAN_EV_20, CAR.BYD_TANG_DM, CAR.BYD_TANG_DMI_21,
+                         CAR.BYD_SONG_PLUS_DMI_21, CAR.BYD_SONG_PLUS_DMI_22, CAR.BYD_SONG_PLUS_DMI_23,
+                         CAR.BYD_SONG_PRO_DMI_22):
             ret.minSteerSpeed = 0
             ret.autoResumeSng = True
             ret.stopAccel = -0.5
