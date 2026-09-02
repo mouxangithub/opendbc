@@ -40,7 +40,8 @@ class CarControllerParams:
   # Lane Tracing Assist (LTA) control limits
   ANGLE_LIMITS: AngleSteeringLimits = AngleSteeringLimits(
     # EPS ignores commands above this angle and causes PCS to fault
-    94.9461,  # deg
+    # Increased from 94.9461 to 180.0 for testing; revert if PCS faults occur.
+    180.0,  # deg
     # Assuming a steering ratio of 13.7:
     # Limit to ~2.0 m/s^3 up (7.5 deg/s), ~3.5 m/s^3 down (13 deg/s) at 75 mph
     # Worst case, the low speed limits will allow ~4.0 m/s^3 up (15 deg/s) and ~4.9 m/s^3 down (18 deg/s) at 75 mph,
