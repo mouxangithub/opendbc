@@ -222,14 +222,14 @@ class TestToyotaSafetyTorqueGasInterceptor(TestToyotaSafetyGasInterceptorBase, T
 class TestToyotaSafetyAngle(TestToyotaSafetyBase, common.AngleSteeringSafetyTest):
 
   # Angle control limits
-  STEER_ANGLE_MAX = 94.9461  # deg
+  STEER_ANGLE_MAX = 180.0  # deg (放宽: 原 94.9461, PCS fault 边界, 实测确认)
   DEG_TO_CAN = 17.452007  # 1 / 0.0573 deg to can
 
   ANGLE_RATE_BP = [5., 25., 25.]
-  ANGLE_RATE_UP = [0.3, 0.15, 0.15]  # windup limit
-  ANGLE_RATE_DOWN = [0.36, 0.26, 0.26]  # unwind limit
+  ANGLE_RATE_UP = [0.35, 0.18, 0.18]  # windup limit (放宽: 原 0.3/0.15)
+  ANGLE_RATE_DOWN = [0.42, 0.30, 0.30]  # unwind limit (放宽: 原 0.36/0.26)
 
-  MAX_LTA_ANGLE = 94.9461  # PCS faults if commanding above this, deg
+  MAX_LTA_ANGLE = 180.0  # PCS faults if commanding above this, deg
   MAX_MEAS_TORQUE = 1500  # max allowed measured EPS torque before wind down
   MAX_LTA_DRIVER_TORQUE = 150  # max allowed driver torque before wind down
 

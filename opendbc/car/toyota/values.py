@@ -47,8 +47,9 @@ class CarControllerParams:
     # Worst case, the low speed limits will allow ~4.0 m/s^3 up (15 deg/s) and ~4.9 m/s^3 down (18 deg/s) at 75 mph,
     # however the EPS has its own internal limits at all speeds which are less than that:
     # Observed internal torque rate limit on TSS 2.5 Camry and RAV4 is ~1500 units/sec up and down when using LTA
-    ([5, 25], [0.3, 0.15]),
-    ([5, 25], [0.36, 0.26]),
+    # [放宽] 中高速段 +20% 帮助上下闸道弯跟随更顺；低速段仅 +17% 以免触发 EPS PCS fault
+    ([5, 25], [0.35, 0.18]),
+    ([5, 25], [0.42, 0.30]),
   )
 
   MAX_LTA_DRIVER_TORQUE_ALLOWANCE = 150  # slightly above steering pressed allows some resistance when changing lanes

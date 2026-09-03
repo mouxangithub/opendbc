@@ -232,15 +232,15 @@ static bool toyota_tx_hook(const CANPacket_t *msg) {
   static const AngleSteeringLimits TOYOTA_ANGLE_STEERING_LIMITS = {
     // LTA angle limits
     // factor for STEER_TORQUE_SENSOR->STEER_ANGLE and STEERING_LTA->STEER_ANGLE_CMD (1 / 0.0573)
-    .max_angle = 6283,  // EPS only accepts up to 180.0 (180.0 * 17.452007)
+    .max_angle = 3141,  // 180.0° * 17.452007 = 3141 (与前端 STEER_ANGLE_MAX=180 一致)
     .angle_deg_to_can = 17.452007,
     .angle_rate_up_lookup = {
       {5., 25., 25.},
-      {0.3, 0.15, 0.15}
+      {0.35, 0.18, 0.18}
     },
     .angle_rate_down_lookup = {
       {5., 25., 25.},
-      {0.36, 0.26, 0.26}
+      {0.42, 0.30, 0.30}
     },
   };
 
