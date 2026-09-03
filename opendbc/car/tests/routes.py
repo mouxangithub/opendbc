@@ -1,5 +1,6 @@
 from typing import NamedTuple
 
+from opendbc.car.byd.values import CAR as BYD
 from opendbc.car.chrysler.values import CAR as CHRYSLER
 from opendbc.car.gm.values import CAR as GM
 from opendbc.car.ford.values import CAR as FORD
@@ -17,6 +18,7 @@ from opendbc.car.volkswagen.values import CAR as VOLKSWAGEN
 from opendbc.car.body.values import CAR as COMMA
 from opendbc.car.psa.values import CAR as PSA
 from opendbc.car.mg.values import CAR as MG
+from opendbc.car.byd.values import CAR as BYD
 
 # FIXME: add routes for these cars
 non_tested_cars = [
@@ -54,6 +56,17 @@ non_tested_cars = [
   GM.CHEVROLET_TRAILBLAZER_NON_ACC_2ND_GEN,
   GM.CHEVROLET_MALIBU_NON_ACC_9TH_GEN,
   GM.CADILLAC_XT5_NON_ACC_1ST_GEN,
+
+  BYD.BYD_HAN_DM_20, #byd routes to be added later with official device
+  BYD.BYD_HAN_EV_20,
+  BYD.BYD_QIN_PLUS_DMI_23,
+  BYD.BYD_SONG_PLUS_DMI_21,
+  BYD.BYD_SONG_PLUS_DMI_22,
+  BYD.BYD_SONG_PLUS_DMI_23,
+  BYD.BYD_SONG_PRO_DMI_22,
+  BYD.BYD_TANG_DM,
+  BYD.BYD_TANG_DMI_21,
+  BYD.BYD_YUAN_PLUS_DMI_22
 ]
 
 
@@ -65,6 +78,8 @@ class CarTestRoute(NamedTuple):
 
 routes = [
   CarTestRoute("efdf9af95e71cd84/2022-05-13--19-03-31", COMMA.COMMA_BODY),
+
+  CarTestRoute("b8b2d1a1df1b3aad/000000a0--7c51639c22", BYD.BYD_ATTO3, segment=0),
 
   CarTestRoute("c5e3aa51055c8f47|2023-12-06--20-01-44", CHRYSLER.JEEP_CHEROKEE_5TH_GEN),
   CarTestRoute("0c94aa1e1296d7c6/2021-05-05--19-48-37", CHRYSLER.JEEP_GRAND_CHEROKEE),
