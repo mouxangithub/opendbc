@@ -16,6 +16,7 @@
 #define BYD_CANADDR_STEERING_TORQUE       0x1FC  // MAIN_TORQUE from EPS (NOT driver input)
 #define BYD_CANADDR_STEER_MODULE_2        0x11F  // STEER_ANGLE_2 + DRIVER_EPS_TORQUE
 #define BYD_CANADDR_STEERING_MODULE_ADAS  0x1E2  // LKAS steering command
+#define BYD_CANADDR_GEN_STEERING_MODULE_ADAS  0x1E2  // generic-angle DBC steering command (CID_TCDUBH, same addr/layout as ATTO3)
 #define BYD_CANADDR_WHEEL_SPEED           0x122  // per-wheel speeds
 
 #define BYD_CANBUS_ESC  0
