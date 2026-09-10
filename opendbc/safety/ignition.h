@@ -48,9 +48,15 @@ void ignition_can_hook(const CANPacket_t *msg) {
       prev_counter_tesla = counter;
     }
 
-    // Mazda exception
+    // Mazda GEN1 exception
     if ((msg->addr == 0x9EU) && (len == 8)) {
       ignition_can = (msg->data[0] >> 5) == 0x6U;
+      ignition_can_cnt = 0U;
+    }
+
+    // Mazda GEN2 exception
+    if ((msg->addr == 0x274U) && (len == 8)) {
+      ignition_can = (msg->data[5] & 0x4U) != 0U;
       ignition_can_cnt = 0U;
     }
 
@@ -65,6 +71,16 @@ void ignition_can_hook(const CANPacket_t *msg) {
         ignition_can_cnt = 0U;
       }
       prev_counter_vw_meb = counter;
+    }
+  }
+
+  if (msg->bus == 1U) {
+    int len = GET_LEN(msg);
+
+    // Mazda GEN2 exception
+    if ((msg->addr == 0x274U) && (len == 8)) {
+      ignition_can = (msg->data[5] & 0x4U) != 0U;
+      ignition_can_cnt = 0U;
     }
   }
 
