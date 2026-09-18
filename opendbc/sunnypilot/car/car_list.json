@@ -2610,6 +2610,20 @@
     ],
     "package": "All"
   },
+  "Lexus ES 2022-26 PATCHED": {
+    "platform": "LEXUS_ES_PATCHED",
+    "make": "Lexus",
+    "brand": "toyota",
+    "model": "ES",
+    "year": [
+      "2022",
+      "2023",
+      "2024",
+      "2025",
+      "2026"
+    ],
+    "package": "All"
+  },
   "Lexus ES Hybrid 2017-18": {
     "platform": "LEXUS_ES",
     "make": "Lexus",
@@ -4018,14 +4032,36 @@
     ],
     "package": "All"
   },
+  "Toyota RAV4 Prime 2023-24 PATCHED": {
+    "platform": "TOYOTA_RAV4_PRIME_PATCHED",
+    "make": "Toyota",
+    "brand": "toyota",
+    "model": "RAV4 Prime",
+    "year": [
+      "2023",
+      "2024"
+    ],
+    "package": "All"
+  },
   "Toyota Wildlander PHEV 2021-23": {
     "platform": "TOYOTA_WILDLANDER_PHEV",
     "make": "Toyota",
     "brand": "toyota",
-    "model": "Wildlander PHEV",
+    "model": "Wildlander Phev",
     "year": [
       "2021",
       "2022"
+    ],
+    "package": "All"
+  },
+  "Toyota Wildlander PHEV 2023-24 PATCHED": {
+    "platform": "TOYOTA_WILDLANDER_PHEV_PATCHED",
+    "make": "Toyota",
+    "brand": "toyota",
+    "model": "Wildlander Phev",
+    "year": [
+      "2023",
+      "2024"
     ],
     "package": "All"
   },
@@ -4050,6 +4086,21 @@
       "2021",
       "2022",
       "2023"
+    ],
+    "package": "All"
+  },
+  "Toyota Sienna 2021-26 PATCHED": {
+    "platform": "TOYOTA_SIENNA_PATCHED",
+    "make": "Toyota",
+    "brand": "toyota",
+    "model": "Sienna",
+    "year": [
+      "2021",
+      "2022",
+      "2023",
+      "2024",
+      "2025",
+      "2026"
     ],
     "package": "All"
   },

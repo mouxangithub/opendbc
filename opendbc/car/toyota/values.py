@@ -93,6 +93,9 @@ class ToyotaFlags(IntFlag):
   # these cars can utilize 2.0 m/s^2
   RAISED_ACCEL_LIMIT = 1024
   SECOC = 2048
+  # The EPS firmware accepts dummy SecOC MACs for lateral frames. Longitudinal
+  # control remains entirely stock on this platform.
+  EPS_BYPASS_SECOC = 4096
 
   # deprecated flags
   # these cars are speculated to allow stop and go when the DSU is unplugged or disabled with sDSU
@@ -119,6 +122,12 @@ class ToyotaCarDocs(CarDocs):
 class ToyotaSecOcCarDocs(ToyotaCarDocs):
   support_type: SupportType = SupportType.CUSTOM
   support_link: str = "#secoc-cars-with-recoverable-keys"
+
+
+@dataclass
+class ToyotaPatchedCarDocs(ToyotaSecOcCarDocs):
+  support_type: SupportType = SupportType.CUSTOM
+  support_link: str = "#secoc-cars-with-eps-patched"
 
 
 @dataclass
@@ -310,9 +319,19 @@ class CAR(Platforms):
     [ToyotaSecOcCarDocs("Toyota RAV4 Prime 2021-23", min_enable_speed=MIN_ACC_SPEED)],
     CarSpecs(mass=4372. * CV.LB_TO_KG, wheelbase=2.68, steerRatio=16.88, tireStiffnessFactor=0.5533),
   )
+  TOYOTA_RAV4_PRIME_PATCHED = ToyotaSecOCPlatformConfig(
+    [ToyotaPatchedCarDocs("Toyota RAV4 Prime 2023-24", min_enable_speed=MIN_ACC_SPEED)],
+    CarSpecs(mass=4372. * CV.LB_TO_KG, wheelbase=2.68, steerRatio=16.88, tireStiffnessFactor=0.5533),
+    flags=ToyotaFlags.EPS_BYPASS_SECOC,
+  )
   TOYOTA_WILDLANDER_PHEV = ToyotaSecOCPlatformConfig(
     [ToyotaCarDocs("Toyota Wildlander PHEV 2021-23", min_enable_speed=MIN_ACC_SPEED)],
     CarSpecs(mass=4155. * CV.LB_TO_KG, wheelbase=2.69, steerRatio=16.88, tireStiffnessFactor=0.5533),
+  )
+  TOYOTA_WILDLANDER_PHEV_PATCHED = ToyotaSecOCPlatformConfig(
+    [ToyotaPatchedCarDocs("Toyota Wildlander PHEV 2023-24", min_enable_speed=MIN_ACC_SPEED)],
+    CarSpecs(mass=4155. * CV.LB_TO_KG, wheelbase=2.69, steerRatio=16.88, tireStiffnessFactor=0.5533),
+    flags=ToyotaFlags.EPS_BYPASS_SECOC,
   )
   TOYOTA_YARIS = ToyotaSecOCPlatformConfig(
     [ToyotaSecOcCarDocs("Toyota Yaris (Non-US only) 2020, 2023", min_enable_speed=MIN_ACC_SPEED)],
@@ -332,6 +351,11 @@ class CAR(Platforms):
   TOYOTA_SIENNA_4TH_GEN = ToyotaSecOCPlatformConfig(
     [ToyotaSecOcCarDocs("Toyota Sienna 2021-23", min_enable_speed=MIN_ACC_SPEED)],
     CarSpecs(mass=4625. * CV.LB_TO_KG, wheelbase=3.06, steerRatio=17.8, tireStiffnessFactor=0.444),
+  )
+  TOYOTA_SIENNA_PATCHED = ToyotaSecOCPlatformConfig(
+    [ToyotaPatchedCarDocs("Toyota Sienna 2021-26 PATCHED", min_enable_speed=MIN_ACC_SPEED)],
+    CarSpecs(mass=4625. * CV.LB_TO_KG, wheelbase=3.06, steerRatio=17.8, tireStiffnessFactor=0.444),
+    flags=ToyotaFlags.EPS_BYPASS_SECOC,
   )
 
   # Lexus
@@ -354,6 +378,11 @@ class CAR(Platforms):
       ToyotaCarDocs("Lexus ES Hybrid 2019-25", video="https://youtu.be/BZ29osRVJeg?t=12"),
     ],
     LEXUS_ES.specs,
+  )
+  LEXUS_ES_PATCHED = ToyotaSecOCPlatformConfig(
+    [ToyotaPatchedCarDocs("Lexus ES 2022-26 PATCHED", min_enable_speed=MIN_ACC_SPEED)],
+    CarSpecs(mass=3677. * CV.LB_TO_KG, wheelbase=2.8702, steerRatio=16.0, tireStiffnessFactor=0.444),
+    flags=ToyotaFlags.EPS_BYPASS_SECOC,
   )
   LEXUS_IS = PlatformConfig(
     [ToyotaCarDocs("Lexus IS 2017-19")],
