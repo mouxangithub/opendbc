@@ -49,6 +49,7 @@ static void volkswagen_mlb_rx_hook(const CANPacket_t *msg) {
       if (GET_BIT(msg, 13U)) {
         controls_allowed = false;
       }
+      acc_main_on = GET_BIT(msg, 12U);  // LS_Hauptschalter
     }
 
     // Signal: Motor_03.MO_Fahrpedalrohwert_01
