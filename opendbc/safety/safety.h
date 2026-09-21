@@ -24,12 +24,15 @@
 #include "opendbc/safety/modes/nissan.h"
 #include "opendbc/safety/modes/volkswagen_mlb.h"
 #include "opendbc/safety/modes/volkswagen_mqb.h"
-#include "opendbc/safety/modes/volkswagen_meb.h"
 #include "opendbc/safety/modes/volkswagen_pq.h"
 #include "opendbc/safety/modes/elm327.h"
 #include "opendbc/safety/modes/body.h"
+#include "opendbc/safety/modes/byd.h"
 #include "opendbc/safety/modes/psa.h"
+#ifdef CANFD
+#include "opendbc/safety/modes/volkswagen_meb.h"
 #include "opendbc/safety/modes/hyundai_canfd.h"
+#endif
 
 uint32_t GET_BYTES(const CANPacket_t *msg, int start, int len) {
   uint32_t ret = 0U;
@@ -62,6 +65,8 @@ int cruise_button_prev = 0;
 bool safety_rx_checks_invalid = false;
 bool enable_gas_interceptor = false;
 int gas_interceptor_prev = 0;
+
+// FrogPilot variables
 
 // for safety modes with torque steering control
 int desired_torque_last = 0;       // last desired steer torque
@@ -97,6 +102,9 @@ uint16_t current_safety_param = 0;
 uint16_t current_safety_param_sp = 0;
 static const safety_hooks *current_hooks = &nooutput_hooks;
 safety_config current_safety_config;
+
+// OPGM variables
+bool enable_gas_interceptor = false;
 
 static void generic_rx_checks(void);
 static void stock_ecu_check(bool stock_ecu_detected);
@@ -221,6 +229,8 @@ bool safety_rx_hook(const CANPacket_t *msg) {
     heartbeat_engaged_mismatches = 0;
   }
 
+  // FrogPilot variables
+
   return valid;
 }
 
@@ -303,6 +313,7 @@ void gen_crc_lookup_table_8(uint8_t poly, uint8_t crc_lut[]) {
   }
 }
 
+#ifdef CANFD
 void gen_crc_lookup_table_16(uint16_t poly, uint16_t crc_lut[]) {
   for (uint16_t i = 0; i < 256U; i++) {
     uint16_t crc = i << 8U;
@@ -316,6 +327,7 @@ void gen_crc_lookup_table_16(uint16_t poly, uint16_t crc_lut[]) {
     crc_lut[i] = crc;
   }
 }
+#endif
 
 // 1Hz safety function called by main. Now just a check for lagging safety messages
 void safety_tick(const safety_config *cfg) {
@@ -328,8 +340,7 @@ void safety_tick(const safety_config *cfg) {
       // lag threshold is max of: 1s and MAX_MISSED_MSGS * expected timestep.
       // Quite conservative to not risk false triggers.
       // 2s of lag is worse case, since the function is called at 1Hz
-      uint32_t frequency = cfg->rx_checks[i].msg[cfg->rx_checks[i].status.index].frequency;
-      uint32_t timestep = 1e6 / frequency;
+      uint32_t timestep = 1e6 / cfg->rx_checks[i].msg[cfg->rx_checks[i].status.index].frequency;
       bool lagging = elapsed_time > SAFETY_MAX(timestep * MAX_MISSED_MSGS, 1e6);
       cfg->rx_checks[i].status.lagging = lagging;
       if (lagging) {
@@ -341,7 +352,6 @@ void safety_tick(const safety_config *cfg) {
       bool frequency_invalid = !cfg->rx_checks[i].msg[cfg->rx_checks[i].status.index].ignore_frequency_check && (frequency < 10U);
       if (lagging || frequency_invalid || !is_msg_valid(cfg->rx_checks, i)) {
         rx_checks_invalid = true;
-        controls_allowed = false;
       }
     }
   }
@@ -373,6 +383,8 @@ static void generic_rx_checks(void) {
     controls_allowed = false;
   }
   steering_disengage_prev = steering_disengage;
+
+  // FrogPilot variables
 }
 
 static void stock_ecu_check(bool stock_ecu_detected) {
@@ -410,16 +422,19 @@ int set_safety_hooks(uint16_t mode, uint16_t param) {
     {SAFETY_CHRYSLER, &chrysler_hooks},
     {SAFETY_SUBARU, &subaru_hooks},
     {SAFETY_VOLKSWAGEN_MQB, &volkswagen_mqb_hooks},
-    {SAFETY_VOLKSWAGEN_MEB, &volkswagen_meb_hooks},
     {SAFETY_NISSAN, &nissan_hooks},
     {SAFETY_NOOUTPUT, &nooutput_hooks},
     {SAFETY_HYUNDAI_LEGACY, &hyundai_legacy_hooks},
     {SAFETY_MAZDA, &mazda_hooks},
     {SAFETY_BODY, &body_hooks},
+    {SAFETY_BYD, &byd_hooks},
     {SAFETY_FORD, &ford_hooks},
     {SAFETY_RIVIAN, &rivian_hooks},
     {SAFETY_TESLA, &tesla_hooks},
+#ifdef CANFD
+    {SAFETY_VOLKSWAGEN_MEB, &volkswagen_meb_hooks},
     {SAFETY_HYUNDAI_CANFD, &hyundai_canfd_hooks},
+#endif
 #ifdef ALLOW_DEBUG
     {SAFETY_MG, &mg_hooks},
     {SAFETY_CHRYSLER_CUSW, &chrysler_cusw_hooks},
@@ -477,6 +492,9 @@ int set_safety_hooks(uint16_t mode, uint16_t param) {
   relay_malfunction_reset();
   safety_rx_checks_invalid = false;
 
+  // OPGM variables
+  enable_gas_interceptor = false;
+
   current_safety_config.rx_checks = NULL;
   current_safety_config.rx_checks_len = 0;
   current_safety_config.tx_msgs = NULL;
@@ -505,6 +523,9 @@ int set_safety_hooks(uint16_t mode, uint16_t param) {
       current_safety_config.rx_checks[j].status = (RxStatus){0};
     }
   }
+
+  // FrogPilot variables
+
   return set_status;
 }
 
