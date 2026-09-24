@@ -151,6 +151,24 @@ class HyundaiFlags(IntFlag):
 
 
 @dataclass
+
+# Capability bits detected at fingerprint time. Deliberately NOT part of HyundaiFlags:/n# that enum is read by panda safety, and these describe optional equipment (which
+# radar object groups the car broadcasts, cluster features) rather than anything the
+# safety code acts on. Ported from cp, keeping their bit values so logs stay comparable.
+class HyundaiExtFlags(IntFlag):
+  NAVI_CLUSTER = 2 ** 2
+  HAS_LFAHDA = 2 ** 4
+  CANFD_GEARS_NONE = 2 ** 6
+  RADAR_GROUP1 = 2 ** 7  # 0x210 radar group 1, 0x3A5 radar group 2
+  CANFD_GEARS_69 = 2 ** 10
+  RADAR_GROUP3 = 2 ** 11  # 0x400-0x41D radar object group
+  CORNER_RADAR_OBJECTS_235 = 2 ** 12  # 0x230 status + 0x235-0x248 raw corner radar objects
+  CORNER_RADAR_OBJECTS_180 = 2 ** 13  # 0x180-0x184 bus 1 two-slot raw corner/front radar objects
+  CORNER_RADAR_OBJECTS_430 = 2 ** 14  # 0x430-0x437 left + 0x440-0x447 right IONIQ 9 corner radar bins
+  RADAR_GROUP4 = 2 ** 15  # 0x500-0x507 Denso DNMWR006 stable radar tracks
+  EV_MODE_STATUS_230 = 2 ** 16  # ECAN 0x230/DLC32 exposes the hybrid power-flow mode
+
+@dataclass
 class HyundaiCarDocs(CarDocs):
   package: str = "Smart Cruise Control (SCC)"
 

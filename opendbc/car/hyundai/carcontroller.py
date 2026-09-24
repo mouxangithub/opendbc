@@ -1,5 +1,6 @@
 import numpy as np
 from opendbc.can import CANPacker
+from openpilot.common.params import Params
 from opendbc.car import Bus, DT_CTRL, make_tester_present_msg, structs
 from opendbc.car.lateral import apply_driver_steer_torque_limits, common_fault_avoidance
 from opendbc.car.common.conversions import Conversions as CV
@@ -28,6 +29,17 @@ MAX_ANGLE_CONSECUTIVE_FRAMES = 2
 # and triggers the "SCC Conditions Not Met" alert. Delaying the button send lets factory SCC disengage
 # naturally on brake press. We send ~100 ms later if it fails to do so, or if we want to cancel for another reason.
 CANCEL_BUTTON_DELAY_FRAMES = 10
+
+# Haptic pattern used when carrot announces a speed-camera deceleration: on/off
+# windows in seconds from the start of the burst. Ported from cp.
+VIBRATE_INTERVALS = (
+  (0.0, 0.5),
+  (1.0, 1.5),
+  (5.0, 5.5),
+  (6.0, 6.5),
+  (7.5, 8.0),
+)
+VIBRATE_DURATION_S = 8.0
 
 
 def process_hud_alert(enabled, fingerprint, hud_control):
@@ -65,6 +77,14 @@ class CarController(CarControllerBase, EsccCarController, LeadDataCarController,
     IntelligentCruiseButtonManagementInterface.__init__(self, CP, CP_SP)
     self.CAN = CanBus(CP)
     self.params = CarControllerParams(CP)
+    # Persistent params for the speed-camera haptic feedback. A separate Params handle
+    # because self.params is the CarControllerParams tuning container, not the store.
+    self._haptic_params = Params()
+    # Frame at which the current haptic burst ends, -1 when idle. The burst is
+    # started on the rising edge of activeCarrot == 3 (see create_can_msgs).
+    self._speed_camera_haptic_end_frame = -1
+    self._speed_camera_haptic_start_frame = -1
+    self._active_carrot_prev = 0
     self.packer = CANPacker(dbc_names[Bus.pt])
     self.angle_limit_counter = 0
 
@@ -154,6 +174,43 @@ class CarController(CarControllerBase, EsccCarController, LeadDataCarController,
     sys_warning, sys_state, left_lane_warning, right_lane_warning = process_hud_alert(CC.enabled, self.car_fingerprint,
                                                                                       hud_control)
 
+    # Nudge the wheel when carrot starts decelerating for a speed camera (activeCarrot 3),
+    # by reusing the lane-departure warning bits so no new CAN signal is needed.
+    #
+    # Presentation only: it reads HUDControl.activeCarrot, which controlsd fills from
+    # carrotManSP, and writes the same warning fields process_hud_alert returns. carrot
+    # itself never reaches an actuator. Ported from cp carcontroller.py:464-480.
+    carrot_state = int(getattr(hud_control, "activeCarrot", 0) or 0)
+    speed_decel_rising = carrot_state == 3 and self._active_carrot_prev != 3
+    self._active_carrot_prev = carrot_state
+
+    if speed_decel_rising and self._speed_camera_haptic_end_frame < 0:
+      self._speed_camera_haptic_start_frame = self.frame
+      self._speed_camera_haptic_end_frame = self.frame + int(VIBRATE_DURATION_S / DT_CTRL)
+    elif carrot_state != 3:
+      # NOTE: cp clears the timer on "not active_speed_decel", and its active_speed_decel
+      # is the RISING EDGE - so the timer is wiped on the very next frame and its window
+      # check never passes. Traced frame by frame: end goes 800 -> -1 on frame 1, and the
+      # burst never fires. Clearing on "no longer decelerating" instead is what the code
+      # plainly intends and what makes the pattern actually run.
+      self._speed_camera_haptic_end_frame = -1
+
+    # Elapsed is measured from the recorded start frame, not recomputed from `end`:
+    # `end` is cleared below once the burst expires, so deriving the start from it would
+    # read differently on the frame the burst closes.
+    haptic = self._haptic_params.get_int("HapticFeedbackWhenSpeedCamera")
+    if (haptic > 0 and self._speed_camera_haptic_start_frame >= 0
+        and 0 <= self._speed_camera_haptic_end_frame - self.frame < int(VIBRATE_DURATION_S / DT_CTRL)):
+      elapsed = (self.frame - self._speed_camera_haptic_start_frame) * DT_CTRL
+      for start, end in VIBRATE_INTERVALS:
+        if start <= elapsed < end:
+          left_lane_warning = right_lane_warning = haptic
+          break
+
+    if self.frame >= self._speed_camera_haptic_end_frame:
+      self._speed_camera_haptic_end_frame = -1
+      self._speed_camera_haptic_start_frame = -1
+
     can_sends.append(hyundaican.create_lkas11(self.packer, self.frame, self.CP, apply_torque, apply_steer_req,
                                               torque_fault, CS.lkas11, sys_warning, sys_state, CC.enabled,
                                               hud_control.leftLaneVisible, hud_control.rightLaneVisible,
@@ -179,7 +236,7 @@ class CarController(CarControllerBase, EsccCarController, LeadDataCarController,
       can_sends.extend(hyundaican.create_acc_commands(self.packer, CC.enabled, accel, jerk, int(self.frame / 2),
                                                       self.lead_data, hud_control, set_speed_in_units, stopping,
                                                       CC.cruiseControl.override, use_fca, self.CP,
-                                                      CS.main_cruise_enabled, self.tuning, self.ESCC))
+                                                      CS.main_cruise_enabled, self.tuning, self.ESCC, int(getattr(CS, "softHoldActive", 0) or 0)))
 
     # 20 Hz LFA MFA message
     if self.frame % 5 == 0 and self.CP.flags & HyundaiFlags.SEND_LFA.value:
@@ -224,7 +281,7 @@ class CarController(CarControllerBase, EsccCarController, LeadDataCarController,
         can_sends.extend(hyundaicanfd.create_fca_warning_light(self.packer, self.CAN, self.frame))
       if self.frame % 2 == 0:
         can_sends.append(hyundaicanfd.create_acc_control(self.packer, self.CAN, CC.enabled, self.accel_last, accel, stopping, CC.cruiseControl.override,
-                                                         set_speed_in_units, hud_control, self.lead_data, CS.main_cruise_enabled, self.tuning))
+                                                         set_speed_in_units, hud_control, self.lead_data, CS.main_cruise_enabled, self.tuning, int(getattr(CS, "softHoldActive", 0) or 0)))
         self.accel_last = accel
     else:
       # button presses

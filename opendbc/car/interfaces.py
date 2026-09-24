@@ -1,5 +1,7 @@
+from collections import deque
 import os
 import numpy as np
+from opendbc.car.radar_tracks import MyTrack
 import time
 import tomllib
 from abc import abstractmethod, ABC
@@ -88,12 +90,77 @@ class RadarInterfaceBase(ABC):
     self.pts: dict[int, structs.RadarData.RadarPoint] = {}
     self.track_id: int = 0
     self.frame = 0
+    # Track-smoothing state (cp L1). tracks mirrors pts by native track id and carries
+    # the per-track filters; v_ego/a_ego are delayed by the radar latency so the filter
+    # sees the ego motion from when the return actually reflected it.
+    self.tracks: dict[int, MyTrack] = {}
+    delay = CP.radarDelay
+    self.v_ego_hist: deque[float] = deque([0.0], maxlen=int(round(delay / DT_CTRL)) + 1)
+    self.v_ego = 0.0
+    self.a_ego_hist: deque[float] = deque([0.0], maxlen=int(round(delay / DT_CTRL)) + 1)
+    self.a_ego = 0.0
+    self.last_timestamp = None
+    self.dt = None
+    self.init_samples: list[float] = []
+    self.init_done = False
 
   def update(self, can_packets: list[tuple[int, list[CanData]]]) -> structs.RadarDataT | None:
     self.frame += 1
     if (self.frame % 5) == 0:  # 20 Hz is very standard
       return structs.RadarData()
     return None
+
+  def estimate_dt(self, rcv_time: float) -> None:
+    if self.CP.radarTimeStep > 0.0:
+      self.dt = self.CP.radarTimeStep
+      self.init_done = True
+    elif len(self.init_samples) > 100:
+      self.dt = float(np.mean(np.diff(self.init_samples[50:])))
+      self.init_done = True
+    else:
+      self.init_samples.append(rcv_time)
+
+  def update_carrot(self, v_ego: float, a_ego: float, rcv_time: float,
+                    can_packets: list[tuple[int, list[CanData]]]) -> structs.RadarDataT | None:
+    """Brand-agnostic track smoothing (cp L1).
+
+    Runs the brand's update() first, then filters every measured track's yRel/yvRel
+    through its MyTrack low-pass filters and writes the filtered aLead/jLead back into
+    the published points. The ego values are taken from the delayed history so they match
+    the age of the radar return. Brands that never call this keep their exact old path.
+    """
+    self.v_ego_hist.append(v_ego)
+    self.v_ego = self.v_ego_hist[0]
+    self.a_ego_hist.append(a_ego)
+    self.a_ego = self.a_ego_hist[0]
+    ret = self.update(can_packets)
+
+    if ret is not None:
+      if not self.init_done:
+        self.estimate_dt(rcv_time)
+        return None
+
+      new_tracks: dict[int, MyTrack] = {}
+      for addr, radar_point in self.pts.items():
+        track_id = radar_point.trackId
+        if track_id not in self.tracks:
+          new_tracks[track_id] = MyTrack(track_id, radar_point, self.dt)
+        else:
+          new_tracks[track_id] = self.tracks[track_id]
+        new_tracks[track_id].update(radar_point, self.a_ego)
+
+        new_tracks[track_id].write_acceleration(radar_point)
+        radar_point.yRel = float(new_tracks[track_id].yRel)
+        radar_point.yvRel = float(new_tracks[track_id].yvRel)
+
+      self.tracks = new_tracks
+      # update() already copied self.pts into the result; refresh it so the published
+      # points carry this frame's filtered dynamics, not the values from before them.
+      for radar_point in ret.points:
+        track = self.tracks.get(radar_point.trackId)
+        if track is not None:
+          track.write_acceleration(radar_point)
+    return ret
 
 
 class CarInterfaceBase(ABC, CarInterfaceBaseSP):
