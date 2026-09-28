@@ -7,7 +7,9 @@ from opendbc.car.mazda.carcontroller import CarController
 from opendbc.car.mazda.carstate import CarState
 from opendbc.car.mazda.radar_interface import RadarInterface
 from opendbc.car.mazda.values import DBC, G46L_RADAR_FW, LKAS_LIMITS, STEER_TO_ZERO_EPS_FW, STEER_TO_ZERO_PLATFORMS, SUPPORTED_PLATFORMS, MazdaFlags, \
-  MazdaSafetyFlags, platform_from_vin
+  MazdaSafetyFlags, WMI, platform_from_vin
+from opendbc.car.vin import Vin, is_valid_vin
+from opendbc.sunnypilot.car.mazda.values import MazdaFlagsSP
 
 
 class CarInterface(CarInterfaceBase):
@@ -87,6 +89,10 @@ class CarInterface(CarInterfaceBase):
 
     # A carried-forward CarPlatformBundle can disagree with the physical car after a
     # hardware swap or a branch switch without reinstall.
+    # Oceania clusters over-read the held cruise speed (MazdaFlagsSP.OCEANIA_CLUSTER).
+    if is_valid_vin(stock_cp.carVin) and Vin(stock_cp.carVin).wmi == WMI.OCEANIA_EXPORT:
+      ret.flags |= MazdaFlagsSP.OCEANIA_CLUSTER
+
     vin_platform = platform_from_vin(stock_cp.carVin)
     if vin_platform is not None and vin_platform != str(candidate):
       carlog.warning({"event": "platformBundleVinMismatch", "bundle": str(candidate), "vin_platform": vin_platform,

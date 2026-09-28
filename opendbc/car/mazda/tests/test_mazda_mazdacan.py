@@ -129,7 +129,7 @@ def test_crz_info_accel_encoding_and_checksum(packer, stopping, unlatching):
   (True, True, 2, True, 3, True, "0a018b6000001000"),      # stop-and-go hold (near phase)
   (True, True, 2, True, 4, True, "0a018b8000001000"),      # stop-and-go hold (far phase)
   (True, True, 2, True, 3, False, "0a018b6000000000"),     # relaxed hold, ACC_ACTIVE_2 drops
-  (True, True, 1, True, 2, True, "0a01874000001000"),      # driver gap 1 mirrored to the dash
+  (True, True, 1, True, 2, True, "0a01874000001000"),      # wire gap 1 (4 bars on the cluster)
 ])
 def test_crz_ctrl_golden_bytes(packer, long_active, acc_available, gap, has_lead, phase, acc_active_2, expected):
   dat = mazdacan.create_crz_ctrl(packer, 0, long_active, acc_available, gap, has_lead, phase, acc_active_2)[1]

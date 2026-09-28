@@ -15,8 +15,8 @@ from opendbc.car import structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.mazda import mazdacan
 from opendbc.car.mazda.carstate import ButtonType, CAM_LANEINFO_FRESH_FRAMES
-from opendbc.car.mazda.tests.conftest import car_interface, packer
-from opendbc.car.mazda.values import CarControllerParams
+from opendbc.car.mazda.tests.conftest import car_interface, car_params, car_params_sp, packer
+from opendbc.car.mazda.values import CAR, CarControllerParams
 from opendbc.sunnypilot.car.mazda.values import MazdaFlagsSP
 
 CAM_LANEINFO = 0x440
@@ -810,3 +810,59 @@ class TestMrccButtonEvent:
     ret, _ = feed(CI, 1, pk.make_can_msg("CRZ_BTNS", 0, {"BIT1": 0, "BIT1_INV": 1}))
     assert not ret.buttonEvents
     assert CI.CS.mrcc_button == 0
+
+
+class TestOceaniaCluster:
+  """A NZ CX-9 2021 cluster shows the held cruise speed over-read: displayed = held / 0.98 + 1
+  (zoompilot/opendbc#7, four samples). speed stays the CAN value, speedCluster is the dash."""
+
+  SAMPLES = [(6176, 32), (7352, 38), (10098, 52), (19504, 100)]  # raw CRZ_SPEED, cluster km/h
+
+  @staticmethod
+  def _feed(CI, raw):
+    # the parser wants two counted frames before it trusts the message
+    pk = packer()
+    ret = None
+    for i in range(2):
+      ret = feed(CI, i, pk.make_can_msg("CRZ_EVENTS", 0, {"CRZ_SPEED": raw / 200. - 0.5, "CTR": i}))[0]
+    return ret
+
+  @pytest.mark.parametrize("raw, cluster", SAMPLES)
+  def test_oceania_publishes_the_dash_number_as_speed_cluster(self, raw, cluster):
+    CI = car_interface(alpha_long=False, candidate=CAR.MAZDA_CX9_2021)
+    CI.CP_SP.flags |= MazdaFlagsSP.OCEANIA_CLUSTER
+    ret = self._feed(CI, raw)
+    assert round(ret.cruiseState.speedCluster * CV.MS_TO_KPH) == cluster
+    assert abs(ret.cruiseState.speed * CV.MS_TO_KPH - (raw / 200. - 0.5)) < 0.01
+
+  @pytest.mark.parametrize("raw, cluster", SAMPLES)
+  def test_other_clusters_show_the_can_value(self, raw, cluster):
+    CI = car_interface(alpha_long=False, candidate=CAR.MAZDA_CX9_2021)
+    ret = self._feed(CI, raw)
+    assert ret.cruiseState.speedCluster == ret.cruiseState.speed
+
+  def test_the_flag_follows_the_oceania_wmi(self):
+    for wmi, expect in (("JM0", True), ("JM3", False), ("JM7", False), ("RN2", False)):
+      CP = car_params(CAR.MAZDA_CX9_2021)
+      CP.carVin = wmi + "TCBDY5M0123456"[:14]
+      CP_SP = car_params_sp(CP, CAR.MAZDA_CX9_2021)
+      assert bool(CP_SP.flags & MazdaFlagsSP.OCEANIA_CLUSTER) == expect, wmi
+
+
+class TestDistanceButtons:
+  """DISTANCE_LESS is upstream's one gapAdjustCruise button; DISTANCE_MORE is read as a level
+  for the fork's opposite-direction step and never becomes a button event."""
+
+  def _press(self, CI, less, more, i):
+    pk = packer()
+    return feed(CI, i, pk.make_can_msg("CRZ_BTNS", 0, {"DISTANCE_LESS": less, "DISTANCE_MORE": more, "CTR": i % 16}))[0]
+
+  def test_closer_is_the_gap_button_and_farther_is_a_level(self):
+    CI = car_interface(alpha_long=True)
+    self._press(CI, 0, 0, 0)
+    ret = self._press(CI, 1, 0, 1)
+    assert [be.type for be in ret.buttonEvents] == [structs.CarState.ButtonEvent.Type.gapAdjustCruise]
+    assert CI.CS.distance_more_button == 0
+    ret = self._press(CI, 0, 1, 2)
+    assert CI.CS.distance_more_button == 1
+    assert not any(be.type == structs.CarState.ButtonEvent.Type.gapAdjustCruise and be.pressed for be in ret.buttonEvents)

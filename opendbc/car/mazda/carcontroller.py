@@ -420,8 +420,12 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
       # openpilot engagement. CarState's public availability is already revoked.
       acc_available = CS.cruise_available if session_state == RadarSessionState.HANDBACK and bus_healthy else \
                       CS.out.cruiseState.available and control_ready
-      # Mirror the driver's distance setting; stock defaults to gap 2.
-      gap = (int(CC.hudControl.leadDistanceBars) or 2) if (long_engaged or acc_available) else 0
+      # Mirror the driver's distance setting on the dash; stock shows 2 bars by default.
+      # leadDistanceBars counts up, 1 closest to 3 farthest, and DISTANCE_SETTING counts down
+      # from 4 bars, so the cluster lights 5 - DISTANCE_SETTING bars (stock: the wheel's
+      # DISTANCE_LESS raises the raw, 576 segments).
+      bars = int(CC.hudControl.leadDistanceBars) or 2
+      gap = (5 - bars) if (long_engaged or acc_available) else 0
       acc_active_2 = sm.acc_active_2 if long_engaged else False
       for bus in LONG_BUSES:
         can_sends.append(mazdacan.create_acc_command(self.packer, bus, self.long_counter, accel,
