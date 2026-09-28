@@ -54,8 +54,11 @@ def create_acc_command(packer, bus, counter, accel, *, long_active, acc_availabl
   return packer.make_can_msg("CRZ_INFO", bus, values)
 
 
-def create_crz_ctrl(packer, bus, long_active, acc_available, gap_setting, radar_has_lead, stop_go_phase, acc_active_2):
+def create_crz_ctrl(packer, bus, long_active, acc_available, gap_setting, radar_has_lead, stop_go_phase, acc_active_2,
+                    *, hbc_request=False):
   # CRZ_CTRL replaces radar cruise state and mirrors stop phase and driver gap selection.
+  # NEW_SIGNAL_3 (bit 13) relays the camera's high-beam request (0x440 BIT2) as the stock radar
+  # does; the body raises the lamps and the cluster's green HBC light on it.
   values = {
     "MSG_1_INV": 1,
     "MSG_1_INV_COPY": 1,
@@ -66,6 +69,7 @@ def create_crz_ctrl(packer, bus, long_active, acc_available, gap_setting, radar_
     "RADAR_HAS_LEAD": int(radar_has_lead),
     "RADAR_LEAD_RELATIVE_DISTANCE": stop_go_phase,
     "ACC_ACTIVE_2": int(acc_active_2),
+    "NEW_SIGNAL_3": int(hbc_request),
   }
   return packer.make_can_msg("CRZ_CTRL", bus, values)
 
@@ -186,18 +190,79 @@ def create_alert_command(packer, cam_msg: dict, ldw: bool, steer_required: bool)
   return packer.make_can_msg("CAM_LANEINFO", 0, values)
 
 
-def create_button_cmd(packer, CP, counter, button, bus=0):
+# The MADS white wheel: the dash draws it when the camera's own HUD frame carries TJA=2,
+# and the body reads the same frame. The white bit is only ever XORed into an exact
+# camera payload audited to be an idle frame, never a frame we composed. Every observed
+# FSC idle family on TJA-declared cars is enumerated: the OFF family with its
+# counter-nibble twins, the LINE_VISIBLE families and their high-beam variants, and the
+# partial-lane LANE_LINES=3/4 encodings. Exact bases only; do not widen to a field-based
+# rule until more captures are audited. No base may carry ERR_BIT, NO_ERR_BIT (byte 1 0x40,
+# unsettled camera in carstate's takeover gate), LDW or a hands warning.
+MADS_HUD_SAFE_BASE_PAYLOADS = frozenset(bytes.fromhex(h) for h in (
+  "4201000000001040", "4201000000001060", "4221000000004040", "4221000000001040",
+  "4221000000001060", "4201000000004040", "0221000000000040", "4201000000000040",
+  "4221000000000040", "0221000000001040", "4102000000001040",
+  "4122000000001040", "4102000000004040", "4122000000004040",
+  "4221000000004060", "4122000000000040", "4103000000001040", "4104000000001040",
+  "4123000000000040", "4124000000000040", "4123000000001040", "4124000000001040",
+  "4123000000004040", "4124000000004040", "4102000000001060", "4102000000004060",
+  "4122000000001060", "4122000000004060", "0122000000000040", "0122000000004040",
+  "4202000000001040", "4102000000000040",
+))
+# OFF to WHITE is TJA 0 to 2 only: one bit, byte 4 0x20, XORed in, never a frame swap.
+MADS_HUD_WHITE_TJA_XOR = bytes.fromhex("0000000020000000")
+# 64-bit big-endian keep-mask over the bits an idle camera may still move between
+# samples: TJA (byte 4, 0x70), TJA_TRANSITION (byte 3, 0x0C), and the unnamed byte-3
+# transition bits 0x03. Do not clear byte-4 0x80 or unrelated byte-0 family bits.
+# Every allowlisted base carries zero in the masked bits, so no two bases share a key.
+CAM_LANEINFO_TJA_NORMALIZE_MASK = 0xFFFFFFF08FFFFFFF
+_MADS_HUD_SAFE_BASE_BY_INT = {
+  int.from_bytes(b, "big") & CAM_LANEINFO_TJA_NORMALIZE_MASK: b
+  for b in MADS_HUD_SAFE_BASE_PAYLOADS
+}
+
+
+def white_hud_allowlist_base(fsc_raw: bytes | None) -> bytes | None:
+  """The allowlisted idle base for the camera's current frame, TJA/transition bits ignored."""
+  if fsc_raw is None or len(fsc_raw) != 8:
+    return None
+  return _MADS_HUD_SAFE_BASE_BY_INT.get(
+    int.from_bytes(fsc_raw, "big") & CAM_LANEINFO_TJA_NORMALIZE_MASK
+  )
+
+
+def apply_mads_white_hud(fsc_raw: bytes | None, packed_dat: bytes, enabled: bool) -> bytes:
+  """Set TJA=2 on the camera's own allowlisted idle frame, and on nothing else.
+
+  packed_dat must be exactly the base the camera's current frame normalizes to: any other
+  payload, or an unknown camera frame, passes through untouched.
+  """
+  if not enabled or len(packed_dat) != 8:
+    return packed_dat
+  if packed_dat != white_hud_allowlist_base(fsc_raw):
+    return packed_dat
+  return bytes(a ^ b for a, b in zip(packed_dat, MADS_HUD_WHITE_TJA_XOR, strict=True))
+
+
+def is_mads_white_hud(dat: bytes) -> bool:
+  """True when dat is an allowlisted base with only the WHITE TJA bit set."""
+  if len(dat) != 8:
+    return False
+  base = bytes(a ^ b for a, b in zip(dat, MADS_HUD_WHITE_TJA_XOR, strict=True))
+  return base in MADS_HUD_SAFE_BASE_PAYLOADS and dat != base
+
+
+def create_button_cmd(packer, CP, counter, button):
   can = int(button == Buttons.CANCEL)
   res = int(button == Buttons.RESUME)
   inc = int(button == Buttons.SET_PLUS)
   dec = int(button == Buttons.SET_MINUS)
-  # Only ever on the camera bus: the panda refuses it on the car's side, where it would toggle
-  # MADS and arm MRCC in the body.
-  tja = int(button == Buttons.TJA)
-  assert not (tja and bus == 0)
 
   values = {
-    "TJA_BUTTON": tja,
+    # Never pressed by openpilot, on either bus. On the car's side it toggles MADS and arms
+    # MRCC; on the camera's side it is the car's lane-keep switch (CAM_SETTINGS
+    # LKAS_INERVENTION_ON1), and with that off the EPS applies no LKAS torque at all.
+    "TJA_BUTTON": 0,
 
     "CAN_OFF": can,
     "CAN_OFF_INV": (can + 1) % 2,
@@ -229,4 +294,17 @@ def create_button_cmd(packer, CP, counter, button, bus=0):
     "CTR": (counter + 1) % 16,
   }
 
-  return packer.make_can_msg("CRZ_BTNS", bus, values)
+  return packer.make_can_msg("CRZ_BTNS", 0, values)
+
+
+def create_mrcc_off_cmd(packer, counter):
+  # The wheel's MRCC master press, active-low: every button bit 0 with its inversion 1,
+  # the master signature in BIT1/BIT1_INV plus BIT2/BIT3, counter plus one. Only the
+  # TJA-press cleanup sends it, and the panda pins the exact bytes in mazda_mrcc_off_msg_valid.
+  values = {
+    "CAN_OFF_INV": 1, "SET_P_INV": 1, "RES_INV": 1, "SET_M_INV": 1,
+    "DISTANCE_LESS_INV": 1, "DISTANCE_MORE_INV": 1, "MODE_X_INV": 1, "MODE_Y_INV": 1,
+    "BIT1_INV": 1, "BIT2": 1, "BIT3": 1,
+    "CTR": (counter + 1) % 16,
+  }
+  return packer.make_can_msg("CRZ_BTNS", 0, values)

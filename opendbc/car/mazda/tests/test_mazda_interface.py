@@ -10,11 +10,12 @@ platform admission check in the controller.
 import pytest
 
 from opendbc.car import Bus, structs
+from opendbc.car.can_definitions import CanData
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.mazda.carcontroller import CarController
 from opendbc.car.mazda.fingerprints import FW_VERSIONS
 from opendbc.car.mazda.interface import CarInterface
-from opendbc.car.mazda.tests.conftest import DBC_NAME, car_params, car_params_sp
+from opendbc.car.mazda.tests.conftest import CAM_LKAS, CAM_LANEINFO, DBC_NAME, car_interface, car_params, car_params_sp
 from opendbc.car.mazda.values import CAR, DBC, G46L_RADAR_FW, LKAS_LIMITS, STEER_TO_ZERO_EPS_FW, STEER_TO_ZERO_PLATFORMS, MazdaFlags, MazdaSafetyFlags
 
 Ecu = structs.CarParams.Ecu
@@ -336,3 +337,28 @@ class TestMovingTakeoverCapability:
       CP_SP = car_params_sp(CP, CAR.MAZDA_CX5_2022, alpha_long=alpha_long)
       setup_interfaces(CarInterface, CP, CP_SP, [{"MazdaMovingTakeover": declared}])
       assert bool(CP.flags & MazdaFlags.MOVING_TAKEOVER) == expect
+
+
+class TestCamLaneinfoLatch:
+  """CI.update() latches the camera's raw CAM_LANEINFO frame, so it must accept every shape callers pass."""
+
+  LANEINFO_IDLE = bytes.fromhex("4201000000001040")
+
+  def test_bare_tuple_from_the_model_tests(self):
+    ci = car_interface(alpha_long=False)
+    ci.update((0, [CanData(CAM_LANEINFO, self.LANEINFO_IDLE, 2)]))
+    assert ci.CS.cam_laneinfo_raw == self.LANEINFO_IDLE
+    assert ci.CS.cam_laneinfo_stale_frames == 0
+
+  def test_tuple_list_from_card(self):
+    ci = car_interface(alpha_long=False)
+    ci.update([(0, [(CAM_LANEINFO, self.LANEINFO_IDLE, 2)])])
+    assert ci.CS.cam_laneinfo_raw == self.LANEINFO_IDLE
+    assert ci.CS.cam_laneinfo_stale_frames == 0
+
+  def test_silent_cycle_keeps_the_last_payload_and_grows_stale(self):
+    ci = car_interface(alpha_long=False)
+    ci.update([(0, [(CAM_LANEINFO, self.LANEINFO_IDLE, 2)])])
+    ci.update([(1, [(CAM_LKAS, b"\x00" * 8, 2)])])
+    assert ci.CS.cam_laneinfo_raw == self.LANEINFO_IDLE
+    assert ci.CS.cam_laneinfo_stale_frames == 1

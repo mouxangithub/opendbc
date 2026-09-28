@@ -68,6 +68,17 @@ def test_engaged_frame_rates_and_counters(cc, cs):
   assert cc.long_counter == 50 and cc.radar_counter == 10
 
 
+@pytest.mark.parametrize("engaged", [False, True])
+def test_crz_ctrl_relays_hbc_arming_on_both_buses(cc, cs, engaged):
+  # Stock radar relays camera's HBC arming into CRZ_CTRL; synthetic radar must also carry the state.
+  kwargs = dict(accel=0.5) if engaged else dict(enabled=False, long_active=False, accel=0., long_state=OFF)
+  for armed in (False, True, True, False):
+    cc.frame = 0  # force emission
+    sends = step_long(cc, cs, hbc_request=armed, available=True, **kwargs)
+    for bus in (0, 2):
+      assert parse_frame(CRZ_CTRL, frame(sends, CRZ_CTRL, bus), bus)["NEW_SIGNAL_3"] == armed
+
+
 @pytest.mark.parametrize("gap", [1, 2, 3])
 def test_gap_setting_mirrors_driver(cc, cs, gap):
   cc.frame = 0  # force emission on the first step

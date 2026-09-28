@@ -14,7 +14,7 @@ from opendbc.car import Bus, DT_CTRL
 from opendbc.car import structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.mazda import mazdacan
-from opendbc.car.mazda.carstate import CAM_LANEINFO_FRESH_FRAMES, STOCK_CTS_ALERT_FRAMES
+from opendbc.car.mazda.carstate import ButtonType, CAM_LANEINFO_FRESH_FRAMES
 from opendbc.car.mazda.tests.conftest import car_interface, packer
 from opendbc.car.mazda.values import CarControllerParams
 from opendbc.sunnypilot.car.mazda.values import MazdaFlagsSP
@@ -30,7 +30,7 @@ RADAR_UDS_RESP = 0x76c
 # (GSH7-67XK2-U). Only byte 1 differs: bit 5 is BIT2, bit 6 is NO_ERR_BIT.
 BOOTING = bytes([0x42, 0b01000001, 0, 0, 0, 0, 0, 0])       # NO_ERR_BIT set: still booting
 SETTLED = bytes([0x42, 0b00000001, 0, 0, 0, 0, 0, 0])       # markers clear: settled
-BIT2_LATCHED = bytes([0x41, 0b00100001, 0, 0, 0, 0, 0, 0])  # BIT2 stuck high for a whole cycle
+BIT2_LATCHED = bytes([0x41, 0b00100001, 0, 0, 0, 0, 0, 0])  # BIT2 (HBC armed) high for a whole cycle
 FAULTED = bytes([0x42, 0b00000001, 0, 0, 0, 0x01, 0, 0])    # ERR_BIT (bit 40) set
 
 # Exercise CAM_LANEINFO at its longest measured period so freshness tests match the bus cadence.
@@ -102,6 +102,18 @@ class TestFscSettleGate:
     feed_laneinfo(CI, None, CarControllerParams.CAM_LANEINFO_FRESH_T + 0.5)
     assert not feed_laneinfo(CI, SETTLED, SETTLE_T * 0.5)
     assert feed_laneinfo(CI, SETTLED, SETTLE_T * 0.6)
+
+  def test_hbc_arming_follows_bit2_while_fresh(self):
+    # BIT2 is the camera's auto high-beam arming, relayed to the cluster through CRZ_CTRL
+    CI = car_interface(alpha_long=True)
+    feed_laneinfo(CI, BIT2_LATCHED, 1.0)
+    assert CI.CS.hbc_request
+    feed_laneinfo(CI, SETTLED, 1.0)
+    assert not CI.CS.hbc_request
+    # a silent camera relays nothing
+    feed_laneinfo(CI, BIT2_LATCHED, 1.0)
+    feed_laneinfo(CI, None, CarControllerParams.CAM_LANEINFO_FRESH_T + 0.5)
+    assert not CI.CS.hbc_request
 
   def test_gate_starts_closed_before_any_camera_frame(self):
     # the parser reads all-zero before the first frame, which would otherwise look settled
@@ -311,9 +323,7 @@ class TestSpeedSignLimit:
   1-bit SPEED_SIGN_ON at bit 12 is its low bit): 1 = limit displayed in mph, 2 = displayed in
   km/h, 0 = none. Which value an FSC emits tracks its market, not the cluster's unit setting.
   Payloads are real captures: mph frames from a US CX-5 2022 (drive_1x local set), km/h
-  frames from a NZ CX-5 (route
-  ded445e51c0e1830|00000007--4b5a89a1ce) where the old 1-bit decode at bit 12 read 0 and SLA
-  never saw a limit."""
+  frames from a NZ CX-5, where the old 1-bit decode at bit 12 read 0 and SLA never saw a limit."""
 
   @pytest.mark.parametrize("payload, expected_ms", [
     ("0000000002005300", 0.0),                 # no limit displayed
@@ -534,6 +544,35 @@ class TestSteerUndeliveredLatch:
     assert not rig.CS.steer_undelivered
     assert not ret.steerFaultTemporary
 
+  def test_lane_keep_setting_off_clears_and_inhibits_the_latch(self):
+    # With the car's own lane-keep setting off the EPS applies nothing by design (route
+    # 00000105): the latch clears, cannot re-arm, and the alert never fires. Both the CAM_SETTINGS
+    # reading and LANE_LINES 0 count as the setting being off.
+    for off in ({"LKAS_INERVENTION_ON1": 0, "ILKAS_NTERVENTION_ON2": 0}, None):
+      rig = UndeliveredRig()
+      for _ in range(rig.params.STEER_UNDELIVERED_FRAMES + 5):
+        rig.step(600, 0, 1)
+      assert rig.CS.steer_undelivered
+      if off is not None:
+        msg = rig.packer.make_can_msg("CAM_SETTINGS", 2, off)
+      else:
+        msg = rig.packer.make_can_msg("CAM_LANEINFO", 2, {"LANE_LINES": 0})
+      rig.frame += 1
+      ret, _ = feed(rig.CI, rig.frame, msg)
+      assert ret.invalidLkasSetting
+      hold = rig.params.STEER_UNDELIVERED_FRAMES + rig.params.STEER_UNDELIVERED_ALERT_FRAMES + 50
+      for _ in range(hold):
+        ret = rig.step(600, 0, 1)
+      assert not rig.CS.steer_undelivered
+      assert not ret.steerFaultTemporary
+      if off is not None:
+        # the setting back on: the latch measures again
+        rig.frame += 1
+        feed(rig.CI, rig.frame, rig.packer.make_can_msg("CAM_SETTINGS", 2, {"LKAS_INERVENTION_ON1": 1, "ILKAS_NTERVENTION_ON2": 1}))
+        for _ in range(rig.params.STEER_UNDELIVERED_FRAMES + 5):
+          rig.step(600, 0, 1)
+        assert rig.CS.steer_undelivered
+
   def test_small_or_delivered_requests_never_latch(self):
     rig = UndeliveredRig()
     for _ in range(200):
@@ -640,15 +679,15 @@ class TestTjaButtonEvents:
 
   def test_tja_press_emits_an_lkas_event(self):
     CI, pk = self._declared(), packer()
-    self._btns(CI, pk, 0, TJA_BUTTON=0)
-    ret = self._btns(CI, pk, 1, TJA_BUTTON=1)
+    self._btns(CI, pk, 0, TJA_BUTTON=0, BIT1=1)
+    ret = self._btns(CI, pk, 1, TJA_BUTTON=1, BIT1=1)
     assert [be.type for be in ret.buttonEvents] == [self.ButtonType.lkas]
     assert ret.buttonEvents[0].pressed
 
   def test_no_event_without_the_button(self):
     CI, pk = self._declared(), packer()
     for i in range(10):
-      ret = self._btns(CI, pk, i, TJA_BUTTON=0)
+      ret = self._btns(CI, pk, i, TJA_BUTTON=0, BIT1=1)
       assert not [be for be in ret.buttonEvents if be.type == self.ButtonType.lkas]
 
   def test_undeclared_ignores_the_bit(self):
@@ -689,18 +728,6 @@ class TestStockTja:
     CI.update([(t_ns(CAM_LANEINFO_FRESH_FRAMES), [])])
     assert CI.CS.stock_tja == 0
 
-  def test_the_controllers_stuck_flag_is_one_stocklkas_pulse(self):
-    # the controller raises stock_cts_stuck once per arming episode; carstate consumes it into a
-    # short stockLkas pulse (the alert's own duration does the showing) and never repeats it
-    CI, pk = car_interface(alpha_long=False), packer()
-    assert not self.step(CI, pk, 0, 4).stockLkas
-    CI.CS.stock_cts_stuck = True
-    for i in range(1, 1 + STOCK_CTS_ALERT_FRAMES):
-      assert self.step(CI, pk, i, 4).stockLkas
-    assert not CI.CS.stock_cts_stuck
-    for i in range(1 + STOCK_CTS_ALERT_FRAMES, 200):
-      assert not self.step(CI, pk, i, 4).stockLkas
-
 
 class TestFirstEngageHold:
   """The EPS's first LKAS engagement after power-up raised LKAS_FAULT 250-300 ms after the first
@@ -734,3 +761,52 @@ class TestFirstEngageHold:
     kw.update(release)
     rig.step(100, 0, kw.pop('blocked'), **kw)
     assert not rig.CS.steer_first_engage_hold
+
+
+def test_intervention_bits_become_an_invalid_lkas_setting():
+  CI, pk = car_interface(alpha_long=False), packer()
+  healthy = pk.make_can_msg("CAM_SETTINGS", 2, {"LKAS_INERVENTION_ON1": 1, "ILKAS_NTERVENTION_ON2": 1})
+  assert not feed(CI, 0, healthy)[0].invalidLkasSetting
+  off = pk.make_can_msg("CAM_SETTINGS", 2, {"LKAS_INERVENTION_ON1": 0, "ILKAS_NTERVENTION_ON2": 0})
+  assert feed(CI, 1, off)[0].invalidLkasSetting
+  # the flag holds through the silent cycles between the message's arrivals
+  for i in range(2, 12):
+    assert feed(CI, i)[0].invalidLkasSetting
+  # either bit alone is a live setting: cameras assert them unevenly, so the
+  # single-bit states must not read as off
+  on1_only = pk.make_can_msg("CAM_SETTINGS", 2, {"LKAS_INERVENTION_ON1": 1, "ILKAS_NTERVENTION_ON2": 0})
+  assert not feed(CI, 12, on1_only)[0].invalidLkasSetting
+  on2_only = pk.make_can_msg("CAM_SETTINGS", 2, {"LKAS_INERVENTION_ON1": 0, "ILKAS_NTERVENTION_ON2": 1})
+  assert not feed(CI, 13, on2_only)[0].invalidLkasSetting
+
+
+def test_cam_settings_absence_never_reads_as_off():
+  # the parser's default zeros must not read as off on a car that never sends CAM_SETTINGS
+  CI = car_interface(alpha_long=False)
+  for i in range(10):
+    assert not feed(CI, i)[0].invalidLkasSetting
+
+
+class TestMrccButtonEvent:
+  """The wheel's MRCC master press (CRZ_BTNS BIT1, active low) as a buttonEvent.
+
+  Declared cars publish mainCruise like any master button; undeclared cars never read the
+  bit, so an unknown idle level there cannot produce events.
+  """
+
+  def test_press_publishes_maincruise_on_a_declared_car(self):
+    CI = car_interface()
+    CI.CP_SP.flags |= MazdaFlagsSP.TJA_BUTTON
+    pk = packer()
+    ret, _ = feed(CI, 0, pk.make_can_msg("CRZ_BTNS", 0, {"BIT1": 1}))
+    assert not ret.buttonEvents
+    ret, _ = feed(CI, 1, pk.make_can_msg("CRZ_BTNS", 0, {"BIT1": 0, "BIT1_INV": 1}))
+    assert [(be.type, be.pressed) for be in ret.buttonEvents] == [(ButtonType.mainCruise, True)]
+
+  def test_press_is_invisible_on_an_undeclared_car(self):
+    CI = car_interface()
+    pk = packer()
+    ret, _ = feed(CI, 0, pk.make_can_msg("CRZ_BTNS", 0, {"BIT1": 1}))
+    ret, _ = feed(CI, 1, pk.make_can_msg("CRZ_BTNS", 0, {"BIT1": 0, "BIT1_INV": 1}))
+    assert not ret.buttonEvents
+    assert CI.CS.mrcc_button == 0

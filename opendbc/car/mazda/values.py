@@ -39,12 +39,6 @@ class CarControllerParams:
   # CAM_LANEINFO runs near 2 Hz, so its freshness window must exceed one period.
   CAM_LANEINFO_PERIOD_T = 0.563
   CAM_LANEINFO_FRESH_T = 1.5
-  # The camera's own TJA/CTS is pressed off on its bus while openpilot steers: one 0x440 period
-  # plus parser latency between presses, three per arming episode before the driver is told.
-  TJA_PRESS_INTERVAL_T = 1.0
-  TJA_PRESS_MAX = 3
-  # The one-shot warning after the third press is a pulse; the alert's own duration shows it.
-  STOCK_CTS_ALERT_T = 0.1
 
   # Stock body-latched releases use a nine-frame RESUME_UNLATCHING pulse.
   RESUME_UNLATCH_LATCHED_T = 0.18  # s, 9 wire frames, the latched-family mode

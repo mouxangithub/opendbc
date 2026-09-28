@@ -36,19 +36,32 @@ def test_alert_command_relays_state_but_not_the_tja_churn(packer):
   assert out["TJA"] == 0 and out["TJA_TRANSITION"] == 0
 
 
-@pytest.mark.parametrize("counter", range(16))
-def test_camera_tja_press_bytes(packer, counter):
-  # the wheel's idle pattern with the TJA bit, counter plus one, on the camera bus only
-  # (tja_cts_route_29: byte 1 0x01 idle, 0x09 pressed; the panda accepts nothing else there)
-  addr, dat, bus = mazdacan.create_button_cmd(packer, None, counter, Buttons.TJA, bus=2)
-  assert (addr, bus) == (0x09d, 2)
-  assert dat == bytes([0x00, 0x09, 0xff, 0xc0 | (((counter + 1) % 16) << 2), 0, 0, 0, 0])
-  with pytest.raises(AssertionError):
-    mazdacan.create_button_cmd(packer, None, counter, Buttons.TJA)
+WHITE_HUD_BASE = bytes.fromhex("4201000000001040")  # the canonical OFF-family idle base
 
 
-def test_car_side_buttons_never_carry_the_tja_bit(packer):
-  for button in (Buttons.CANCEL, Buttons.RESUME, Buttons.SET_PLUS, Buttons.SET_MINUS):
+def test_white_hud_allowlist_maps_tja_states_to_their_idle_base():
+  # a frame that already carries a TJA/transition state maps back to its idle base
+  assert mazdacan.white_hud_allowlist_base(bytes.fromhex("4201000020001040")) == WHITE_HUD_BASE
+  # the counter-nibble twins are separately audited entries, not normalized away
+  assert mazdacan.white_hud_allowlist_base(bytes.fromhex("4201000000001060")) == bytes.fromhex("4201000000001060")
+
+
+def test_apply_mads_white_hud_only_touches_an_allowlisted_base():
+  assert mazdacan.apply_mads_white_hud(WHITE_HUD_BASE, WHITE_HUD_BASE, True) == bytes.fromhex("4201000020001040")
+  assert mazdacan.apply_mads_white_hud(b"\xff" * 8, b"\xff" * 8, True) == b"\xff" * 8
+  assert mazdacan.apply_mads_white_hud(WHITE_HUD_BASE, WHITE_HUD_BASE, False) == WHITE_HUD_BASE
+
+
+def test_is_mads_white_hud_requires_the_exact_xor():
+  assert mazdacan.is_mads_white_hud(bytes.fromhex("4201000020001040"))
+  assert not mazdacan.is_mads_white_hud(WHITE_HUD_BASE)
+  assert not mazdacan.is_mads_white_hud(bytes.fromhex("4201000030001040"))
+
+
+def test_buttons_never_carry_the_tja_bit(packer):
+  # never pressed by openpilot on either bus: on the car's side it toggles MADS and arms MRCC,
+  # on the camera's side it switches the car's own lane-keep setting off
+  for button in (Buttons.CANCEL, Buttons.RESUME, Buttons.SET_PLUS, Buttons.SET_MINUS, Buttons.TJA):
     _, dat, bus = mazdacan.create_button_cmd(packer, None, 3, button)
     assert bus == 0 and not dat[1] & 0x08
 
@@ -123,6 +136,19 @@ def test_crz_ctrl_golden_bytes(packer, long_active, acc_available, gap, has_lead
   assert dat.hex() == expected
 
 
+@pytest.mark.parametrize("long_active, acc_available, gap, has_lead, phase, acc_active_2, expected", [
+  (False, False, 0, False, 0, False, "0221010000000000"),  # standby: the stock radar's frame
+  (False, True, 2, False, 0, False, "02210b0000000000"),   # MRCC armed
+  (True, True, 2, True, 1, True, "0a218b2000001000"),      # engaged
+])
+def test_crz_ctrl_relays_hbc_arming(packer, long_active, acc_available, gap, has_lead, phase, acc_active_2, expected):
+  dat = mazdacan.create_crz_ctrl(packer, 0, long_active, acc_available, gap, has_lead, phase, acc_active_2,
+                                 hbc_request=True)[1]
+  assert dat.hex() == expected
+  bare = mazdacan.create_crz_ctrl(packer, 0, long_active, acc_available, gap, has_lead, phase, acc_active_2)[1]
+  assert bytes(a ^ b for a, b in zip(dat, bare, strict=True)) == bytes([0, 0x20, 0, 0, 0, 0, 0, 0])
+
+
 def test_radar_frames_match_stock():
   expected = [
     (0x499, "0008c00000000000"),
@@ -133,8 +159,9 @@ def test_radar_frames_match_stock():
     (0x365, "fff7fe7ffbff3fc0"),
     (0x366, "fff7fe7ffbff3fc0"),
   ]
-  frames = mazdacan.create_radar_frames(0, 0, None)
-  assert [(f.address, f.dat.hex()) for f in frames] == expected
+  for bus in (0, 2):
+    frames = mazdacan.create_radar_frames(bus, 0, None)
+    assert [(f.address, f.dat.hex()) for f in frames] == expected
 
 
 def test_radar_frames_counter_and_lead_track():

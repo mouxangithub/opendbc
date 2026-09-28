@@ -416,6 +416,7 @@ BO_ 158 MSG_05: 8 XXX
 
 BO_ 157 CRZ_BTNS: 8 XXX
  SG_ TJA_BUTTON : 11|1@0+ (1,0) [0|1] "" XXX
+ SG_ BIT1_INV : 15|1@0+ (1,0) [0|1] "" XXX
  SG_ BIT1 : 16|1@0+ (1,0) [0|1] "" XXX
  SG_ BIT2 : 18|1@0+ (1,0) [0|1] "" XXX
  SG_ BIT3 : 20|1@0+ (1,0) [0|1] "" XXX
