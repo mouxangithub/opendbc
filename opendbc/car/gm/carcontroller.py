@@ -4,8 +4,9 @@ from opendbc.car import Bus, DT_CTRL, structs
 from opendbc.car.lateral import apply_driver_steer_torque_limits
 from opendbc.car.gm import gmcan
 from opendbc.car.common.conversions import Conversions as CV
-from opendbc.car.gm.values import DBC, CanBus, CarControllerParams, CruiseButtons
+from opendbc.car.gm.values import CAR, DBC, CanBus, CarControllerParams, CruiseButtons
 from opendbc.car.interfaces import CarControllerBase
+from openpilot.common.params import Params
 
 VisualAlert = structs.CarControl.HUDControl.VisualAlert
 NetworkLocation = structs.CarParams.NetworkLocation
@@ -32,10 +33,34 @@ class CarController(CarControllerBase):
     self.lka_icon_status_last = (False, False)
 
     self.params = CarControllerParams(self.CP)
+    # Set once per brake-triggered auto-resume so the brake pulse is not repeated
+    # every frame while the state machine sits in starting.
+    self.activateCruise_after_brake = False
 
     self.packer_pt = CANPacker(DBC[self.CP.carFingerprint][Bus.pt])
     self.packer_obj = CANPacker(DBC[self.CP.carFingerprint][Bus.radar])
     self.packer_ch = CANPacker(DBC[self.CP.carFingerprint][Bus.chassis])
+
+  def brake_input(self, brake_force: float) -> int:
+    """Convert a negative deceleration demand into the raw brake value CAN expects.
+
+    The resume pulse asks for a small negative acceleration and this turns it into the
+    unsigned brake command. Kept identical to cp so the pulse strength matches.
+    """
+    MAX_BRAKE = 400
+    if brake_force > 0.0:
+      raise ValueError("brake_force must be <= 0.0")
+    scaled_brake = max(0, min(MAX_BRAKE, int(brake_force * -100)))
+    return -scaled_brake
+
+  def _auto_cruise_control(self) -> int:
+    """The AutoCruiseControl request, in the driver's units.
+
+    Read straight from Params rather than from a VCruiseCarrot instance: the cruise helper
+    already owns that state machine in card.py, and a second copy here would have its own
+    frame counter and unit factor.
+    """
+    return Params().get_int("AutoCruiseControl")
 
   def update(self, CC, CC_SP, CS, now_nanos):
     actuators = CC.actuators
@@ -141,6 +166,41 @@ class CarController(CarControllerBase):
       # While car is braking, cancel button causes ECM to enter a soft disable state with a fault status.
       # A delayed cancellation allows camera to cancel and avoids a fault when user depresses brake quickly
       self.cancel_counter = self.cancel_counter + 1 if CC.cruiseControl.cancel else 0
+
+      # ---- carrot auto-cruise and auto-resume (ported from cp) --------------------------
+      #
+      # Two behaviours, both only for cars where openpilot owns longitudinal control:
+      #
+      #   auto-cruise: press SET for the driver when the cruise helper decides the car
+      #     should be engaged (activateCruise, or the AutoCruiseControl param). A request
+      #     from the helper - the button is still what talks to the car.
+      #   auto-resume: after the driver brakes out of an engage, the car needs a brake
+      #     signal cleared before it will accept SET again. A single short brake pulse does
+      #     it, then the helper is told via ActivateCruiseAfterBrake so it can re-engage.
+      #
+      # On the Volt the same two paths exist but the resume pulse is the only one that
+      # applies; other platforms also honour the AutoCruiseControl request.
+      if self.CP.openpilotLongitudinalControl:
+        if self.CP.carFingerprint == CAR.CHEVROLET_VOLT:
+          if CS.out.activateCruise and not CS.out.cruiseState.enabled:
+            self.activateCruise_after_brake = False
+            if (self.frame - self.last_button_frame) * DT_CTRL > 0.04:
+              self.last_button_frame = self.frame
+              can_sends.append(gmcan.create_buttons(self.packer_pt, CanBus.POWERTRAIN,
+                                                    (CS.buttons_counter + 1) % 4, CruiseButtons.RES_ACCEL))
+          elif actuators.longControlState == LongCtrlState.starting:
+            if CS.out.cruiseState.enabled and not self.activateCruise_after_brake:
+              idx = (self.frame // 4) % 4
+              apply_brake = self.brake_input(-0.5)
+              can_sends.append(gmcan.create_brake_command(self.packer_ch, CanBus.CHASSIS, apply_brake, idx))
+              Params().put_bool_nonblocking("ActivateCruiseAfterBrake", True)
+              self.activateCruise_after_brake = True
+        else:
+          if (CS.out.activateCruise or self._auto_cruise_control() > 0) and not CS.out.cruiseState.enabled:
+            if (self.frame - self.last_button_frame) * DT_CTRL > 0.04:
+              self.last_button_frame = self.frame
+              can_sends.append(gmcan.create_buttons(self.packer_pt, CanBus.POWERTRAIN,
+                                                    (CS.buttons_counter + 1) % 4, CruiseButtons.RES_ACCEL))
 
       # Stock longitudinal, integrated at camera
       if (self.frame - self.last_button_frame) * DT_CTRL > 0.04:

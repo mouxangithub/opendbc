@@ -7,6 +7,7 @@ See the LICENSE.md file in the root directory for more details.
 
 from opendbc.car import structs
 from opendbc.car.toyota import toyotacan
+from opendbc.car.toyota.values import CanBus
 from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP
 
 GearShifter = structs.CarState.GearShifter
@@ -48,6 +49,7 @@ class AutoBrakeHoldCarController(AutoBrakeHold):
   def __init__(self, CP: structs.CarParams, CP_SP: structs.CarParamsSP):
     super().__init__(CP, CP_SP)
 
+    self.CAN = CanBus(CP)
     self.active = False
     self._counter = 0
     self._released = False
@@ -75,6 +77,6 @@ class AutoBrakeHoldCarController(AutoBrakeHold):
     can_sends = []
     if relay_blocked and frame % 2 == 0:
       override = self.active and not pcs_is_active(CS.pre_collision_2)
-      can_sends.append(toyotacan.create_brake_hold_command(packer, frame, CS.pre_collision_2, override))
+      can_sends.append(toyotacan.create_brake_hold_command(packer, frame, CS.pre_collision_2, override, self.CAN.pt))
 
     return can_sends
