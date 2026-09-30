@@ -20,6 +20,14 @@ class CarControllerParams:
   # Keep steering deltas synchronized with this 100 Hz control rate.
   STEER_STEP = 1
 
+  # The measured envelope's full scale, equal to the panda's max_torque for it.
+  EPS_STEER_MAX = 1200  # theoretical max_steer 2047
+  # Upstream's STEER_MAX: the scale params.toml's Mazda tunes, sunnypilot's NNLC models and the
+  # manual torque override are expressed on. Every steering Mazda runs the envelope, so one
+  # ratio converts them (latAccelFactor x TUNE_SCALE, friction / TUNE_SCALE).
+  TUNE_STEER_MAX = 800
+  TUNE_SCALE = EPS_STEER_MAX / TUNE_STEER_MAX
+
   ACCEL_MAX = 2.0   # m/s2
   ACCEL_MIN = -3.5  # m/s2
 
@@ -99,11 +107,10 @@ class CarControllerParams:
       self.STEER_DRIVER_SAMPLES = 10
       self.STEER_DRIVER_MARGIN = 2
 
-      # STEER_MAX scales normalized torque into counts; EPS_CEILING_LOOKUP is the applied limit.
-      # Legacy firmware never commands below its 45 kph floor, so the low-speed scale is moot
-      # there and the rest of the schedule is the same hardware.
-      self.STEER_MAX = 1200        # theoretical max_steer 2047
-      self.STEER_MAX_LOOKUP = ([0., 14.2, 14.5], [1200, 1200, 800])
+      # STEER_MAX scales normalized torque into counts at every speed; EPS_CEILING_LOOKUP is the
+      # applied limit. The EPS is linear in counts, so one scale keeps the learned torque
+      # parameters in one unit (docs/zoompilot/lateral-tune.md).
+      self.STEER_MAX = self.EPS_STEER_MAX
       # Clamp to the measured applied-torque ceiling so controlsd can detect saturation.
       self.EPS_CEILING_LOOKUP = ([8.0, 8.5, 9.4, 10.3, 11.2, 12.1, 13.0, 13.9, 14.5],
                                  [1148, 1132, 1092, 1048, 1012,  920,  808,  676,  620])
@@ -127,7 +134,7 @@ class CarControllerParams:
     else:
       # Upstream's envelope. The interface no longer selects it for any Mazda; the panda keeps
       # it as the no-param default, so flags == 0 must still build.
-      self.STEER_MAX = 800         # theoretical max_steer 2047
+      self.STEER_MAX = self.TUNE_STEER_MAX
       self.STEER_DELTA_UP = 10
       self.STEER_DELTA_DOWN = 25
       self.STEER_DRIVER_MULTIPLIER = 1    # upstream stock
@@ -252,6 +259,14 @@ class LKAS_LIMITS:
   ENABLE_SPEED = 52     # kph
 
 
+# Torque tunes for a platform whose params.toml entry is borrowed, on params.toml's scale:
+# (latAccelFactor, friction). The CX-5 2022 substitutes the CX-9 2021's 1.76; its own global
+# learner reads 1.222 (2026-09-29, docs/zoompilot/lateral-tune.md).
+TORQUE_TUNES = {
+  CAR.MAZDA_CX5_2022: (1.222, 0.154),
+}
+
+
 # Keep steer-to-zero firmware synchronized with the STEER_TO_ZERO_PLATFORMS EPS entries in fingerprints.py.
 STEER_TO_ZERO_EPS_FW = {
   b'K0A1-3210X-A-00\x00\x00\x00\x00\x00\x00\x00\x00\x00',  # CX-8 2023 (Japan)
@@ -261,8 +276,6 @@ STEER_TO_ZERO_EPS_FW = {
 
 # Platforms that ship the steer-to-zero EPS from the factory: what an unread EPS falls back to.
 STEER_TO_ZERO_PLATFORMS = frozenset({CAR.MAZDA_CX5_2022, CAR.MAZDA_CX8_2023})
-# Bodies supported on their stock EPS; any other Mazda needs a steer-to-zero EPS swapped in.
-SUPPORTED_PLATFORMS = STEER_TO_ZERO_PLATFORMS | {CAR.MAZDA_CX9_2021}
 
 # The 2016.5-era radar kept by an EPS-swapped older body. Listed for fingerprinting, but
 # it never publishes 0x361-0x366 on bus 0; its one frame is fully static — no counter, no

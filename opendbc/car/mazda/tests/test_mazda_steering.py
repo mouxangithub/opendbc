@@ -67,11 +67,7 @@ class TestCarControllerParams:
     params = cx5_2022_params()
     # The ceiling is a clamp on delivered-torque counts; the scale is STEER_MAX. The clamp is
     # only meaningful if it sits at or below the scale at every speed.
-    bp, vals = params.EPS_CEILING_LOOKUP
-    for v in np.arange(0.0, 40.0, 0.25):
-      ceiling = np.interp(v, bp, vals)
-      steer_max = np.interp(v, params.STEER_MAX_LOOKUP[0], params.STEER_MAX_LOOKUP[1])
-      assert 0 < ceiling <= steer_max, f"ceiling {ceiling} vs steer_max {steer_max} at {v} m/s"
+    assert 0 < min(params.EPS_CEILING_LOOKUP[1]) and max(params.EPS_CEILING_LOOKUP[1]) <= params.STEER_MAX
 
   def test_eps_ceiling_is_monotone_and_matches_the_measured_rails(self):
     params = cx5_2022_params()
@@ -91,16 +87,10 @@ class TestCarControllerParams:
     assert params.STEER_DELTA_UP * rate_hz == pytest.approx(1200, rel=0.01)
     assert params.STEER_DELTA_DOWN * rate_hz == pytest.approx(1200, rel=0.01)
 
-  def test_cx5_2022_has_lookup(self):
-    params = cx5_2022_params()
-    assert hasattr(params, 'STEER_MAX_LOOKUP')
-    assert params.STEER_MAX == 1200
-
-  @pytest.mark.parametrize("v_ego, steer_max", [(0.0, 1200), (5.0, 1200), (10.0, 1200), (14.2, 1200),
-                                                (14.5, 800), (20.0, 800), (30.0, 800)])
-  def test_cx5_2022_steer_max_by_speed(self, v_ego, steer_max):
-    p = cx5_2022_params()
-    assert round(float(np.interp(v_ego, p.STEER_MAX_LOOKUP[0], p.STEER_MAX_LOOKUP[1]))) == steer_max
+  def test_cx5_2022_steer_max_is_flat(self):
+    # one scale at every speed: the EPS is linear in counts, and a step would put the learned
+    # torque parameters in two units (docs/zoompilot/lateral-tune.md)
+    assert cx5_2022_params().STEER_MAX == 1200
 
   def test_cx5_2022_rate_limits(self):
     params = cx5_2022_params()
@@ -138,11 +128,10 @@ class TestCarControllerParams:
     # EPS present (STEER_TO_ZERO_EPS) on a non-CX-5 model still gets the higher-authority tune
     assert params.STEER_MAX == 1200
     assert params.STEER_DRIVER_MULTIPLIER == 15
-    assert hasattr(params, 'STEER_MAX_LOOKUP')
 
   def test_upstream_envelope_without_either_flag(self):
     params = upstream_params()
-    assert not hasattr(params, 'STEER_MAX_LOOKUP')
+    assert not hasattr(params, 'EPS_CEILING_LOOKUP')
     assert not hasattr(params, 'STEER_UNDELIVERED_FRAMES')
     assert params.STEER_MAX == 800
     assert params.STEER_DRIVER_MULTIPLIER == 1
@@ -150,7 +139,7 @@ class TestCarControllerParams:
   @pytest.mark.parametrize("params", [legacy_fw_params, pre_2022_params], ids=["legacy_fw_in_2022_body", "pre_2022_platform"])
   def test_legacy_firmware_gets_the_same_envelope_and_tune(self, params):
     legacy, stz = params(), cx5_2022_params()
-    for attr in ('STEER_MAX', 'STEER_MAX_LOOKUP', 'EPS_CEILING_LOOKUP', 'STEER_DELTA_UP', 'STEER_DELTA_DOWN',
+    for attr in ('STEER_MAX', 'EPS_CEILING_LOOKUP', 'STEER_DELTA_UP', 'STEER_DELTA_DOWN',
                  'STEER_DRIVER_MULTIPLIER', 'STEER_DRIVER_SAMPLES', 'STEER_DRIVER_MARGIN'):
       assert getattr(legacy, attr) == getattr(stz, attr), attr
     # the latch reads LKAS_TRACK_STATE semantics only the steer-to-zero firmware has
@@ -287,7 +276,7 @@ class TestDriverTorqueHeadroom:
     # behind, so the margin is what covers the rest. Replay put the requirement at 2 counts.
     assert params.STEER_DRIVER_MARGIN >= 2
     # and it must stay small enough to be a margin rather than a torque cut
-    assert params.STEER_DRIVER_MARGIN * self.MULTIPLIER < 0.1 * params.STEER_MAX_LOOKUP[1][0]
+    assert params.STEER_DRIVER_MARGIN * self.MULTIPLIER < 0.1 * params.STEER_MAX
 
   def test_command_stays_under_the_panda_ceiling_while_the_driver_fights(self, cc, cs):
     params = cx5_2022_params()
@@ -295,10 +284,9 @@ class TestDriverTorqueHeadroom:
     # Every frame here was rejected on car, starving the EPS of 0x243 entirely.
     seq = [-25, -25, -25, -27, -28, -29, -30, -28, -26, -26, -29, -29, -31, -31, -31]
     out = self.drive(cc, cs, [-20] * 20 + seq)
-    steer_max = int(np.interp(6.0, params.STEER_MAX_LOOKUP[0], params.STEER_MAX_LOOKUP[1]))
     # the panda's window holds only the last 6 samples, so its ceiling uses the least
     # adverse of those -- the controller must stay at or below it
-    assert out <= self.panda_ceiling(seq[-6:], steer_max)
+    assert out <= self.panda_ceiling(seq[-6:], params.STEER_MAX)
 
   def test_a_steady_driver_torque_costs_nothing(self, cc, cs):
     # the window only bites when the samples disagree; a constant hand on the wheel must
@@ -314,8 +302,7 @@ class TestDriverTorqueHeadroom:
     seq = [30, 30, 30, 25, 20, 15, 10, 5, 0, 0]
     out = self.drive(cc, cs, [30] * 20 + seq, sign=-1.0)
     params = cx5_2022_params()
-    steer_max = int(np.interp(6.0, params.STEER_MAX_LOOKUP[0], params.STEER_MAX_LOOKUP[1]))
-    assert out >= -steer_max + (-self.ALLOWANCE + min(seq[-6:])) * self.MULTIPLIER
+    assert out >= -params.STEER_MAX + (-self.ALLOWANCE + min(seq[-6:])) * self.MULTIPLIER
 
   def test_no_window_on_platforms_without_the_2022_eps(self):
     # pre-2022 params carry no STEER_DRIVER_SAMPLES, so the deque stays one deep and the
@@ -339,3 +326,26 @@ def test_the_first_engage_hold_is_the_steer_to_zero_eps_only(stock_cc, stock_cs)
   stock_cc.steer_to_zero = False
   actuators, _ = step(stock_cc, stock_cs, steer_first_engage_hold=True, long_active=False, enabled=True, lat_active=True, torque=-1.0, v_ego=0.3)
   assert actuators.torqueOutputCan == -stock_cc.params.STEER_DELTA_UP
+
+
+class TestTorqueTune:
+  @pytest.mark.parametrize("platform", [CAR.MAZDA_CX9_2021, CAR.MAZDA_CX5_2022])
+  def test_tune_converted_to_steer_max(self, platform):
+    # params.toml's fit (or the CX-5 2022's own) is on upstream's 800 counts: the same counts per
+    # m/s^2 at 1200
+    from opendbc.car.interfaces import get_torque_params
+    from opendbc.car.mazda.values import TORQUE_TUNES
+    toml = get_torque_params()[platform]
+    laf, friction = TORQUE_TUNES.get(platform, (toml['LAT_ACCEL_FACTOR'], toml['FRICTION']))
+    tune = car_params(platform).lateralTuning.torque
+    assert tune.latAccelFactor == pytest.approx(laf * 1.5, rel=1e-6)
+    assert tune.friction == pytest.approx(friction / 1.5, rel=1e-6)
+
+  @pytest.mark.parametrize("platform", [CAR.MAZDA_CX5_2022, CAR.MAZDA_CX9_2021])
+  def test_a_second_configure_does_not_compound(self, platform):
+    # sunnypilot re-runs configure_torque_tune on the built CarParams when torque control is enforced
+    from opendbc.car.mazda.interface import CarInterface
+    CP = car_params(platform)
+    before = (CP.lateralTuning.torque.latAccelFactor, CP.lateralTuning.torque.friction)
+    CarInterface.configure_torque_tune(CP.carFingerprint, CP.lateralTuning)
+    assert (CP.lateralTuning.torque.latAccelFactor, CP.lateralTuning.torque.friction) == pytest.approx(before, rel=1e-6)

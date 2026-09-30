@@ -72,13 +72,6 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
 
     apply_torque = 0
 
-    # The measured EPS uses a speed-dependent STEER_MAX.
-    if self.eps_2022:
-      steer_max = round(float(np.interp(CS.out.vEgoRaw, self.params.STEER_MAX_LOOKUP[0],
-                                         self.params.STEER_MAX_LOOKUP[1])))
-    else:
-      steer_max = self.params.STEER_MAX
-
     self.driver_torque_samples.append(CS.out.steeringTorque)
     if CS.lkas_rejected:
       # The panda reports every 0x243 it refused back on the can stream (src 192). A rejection
@@ -93,10 +86,10 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
 
     if CC.latActive:
       # calculate steer and also set limits due to driver torque
-      new_torque = int(round(CC.actuators.torque * steer_max))
+      new_torque = int(round(CC.actuators.torque * self.params.STEER_MAX))
 
       # Clamp to applied EPS authority so controlsd can detect saturation. Keep this separate
-      # from steer_max because torque parameter scaling depends on steer_max.
+      # from STEER_MAX because the torque parameters are expressed on STEER_MAX.
       if self.eps_2022:
         eps_ceiling = round(float(np.interp(CS.out.vEgoRaw, self.params.EPS_CEILING_LOOKUP[0],
                                             self.params.EPS_CEILING_LOOKUP[1])))
@@ -110,7 +103,7 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
         driver_torque = max(self.driver_torque_samples) + margin
 
       apply_torque = apply_driver_steer_torque_limits(new_torque, self.apply_torque_last,
-                                                      driver_torque, self.params, steer_max)
+                                                      driver_torque, self.params)
 
     # Stop requesting torque while carstate says the EPS will not take it: after the
     # non-delivery latch, or through its first engagement of the cycle. Recovery ramps from zero.
@@ -156,7 +149,7 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
       can_sends.extend(IntelligentCruiseButtonManagementInterface.update(self, CC_SP, CS, self.packer, self.frame, self.last_button_frame))
 
     new_actuators = CC.actuators.as_builder()
-    new_actuators.torque = apply_torque / steer_max
+    new_actuators.torque = apply_torque / self.params.STEER_MAX
     new_actuators.torqueOutputCan = apply_torque
     # Report the command sent on the wire after clipping, holds, slew, and overrides.
     new_actuators.accel = self.accel_last

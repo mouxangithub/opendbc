@@ -6,8 +6,8 @@ from opendbc.car.interfaces import CarInterfaceBase
 from opendbc.car.mazda.carcontroller import CarController
 from opendbc.car.mazda.carstate import CarState
 from opendbc.car.mazda.radar_interface import RadarInterface
-from opendbc.car.mazda.values import DBC, G46L_RADAR_FW, LKAS_LIMITS, STEER_TO_ZERO_EPS_FW, STEER_TO_ZERO_PLATFORMS, SUPPORTED_PLATFORMS, MazdaFlags, \
-  MazdaSafetyFlags, WMI, platform_from_vin
+from opendbc.car.mazda.values import DBC, G46L_RADAR_FW, LKAS_LIMITS, STEER_TO_ZERO_EPS_FW, STEER_TO_ZERO_PLATFORMS, \
+  TORQUE_TUNES, CarControllerParams, MazdaFlags, MazdaSafetyFlags, WMI, platform_from_vin
 from opendbc.car.vin import Vin, is_valid_vin
 from opendbc.sunnypilot.car.mazda.values import MazdaFlagsSP
 
@@ -16,6 +16,15 @@ class CarInterface(CarInterfaceBase):
   CarState = CarState
   CarController = CarController
   RadarInterface = RadarInterface
+
+  @staticmethod
+  def configure_torque_tune(candidate, tune, steering_angle_deadzone_deg=0.0):
+    # params.toml's tunes are on upstream's STEER_MAX. An override rather than a conversion in
+    # _get_params, so sunnypilot's second call (enforced torque, NNLC) converts as well.
+    CarInterfaceBase.configure_torque_tune(candidate, tune, steering_angle_deadzone_deg)
+    lat_accel_factor, friction = TORQUE_TUNES.get(candidate, (tune.torque.latAccelFactor, tune.torque.friction))
+    tune.torque.latAccelFactor = lat_accel_factor * CarControllerParams.TUNE_SCALE
+    tune.torque.friction = friction / CarControllerParams.TUNE_SCALE
 
   @staticmethod
   def _get_params(ret: structs.CarParams, candidate, fingerprint, car_fw, alpha_long, is_release, docs) -> structs.CarParams:
@@ -62,11 +71,6 @@ class CarInterface(CarInterfaceBase):
       ret.stopAccel = -1.024  # stock MRCC standstill command
       ret.longitudinalActuatorDelay = 0.36  # measured ~0.3 s dead time + ~0.3 s first-order lag
 
-    # Older EPS firmware enforces hands-off and low-speed steering lockouts.
-    # Docs mode carries no real EPS firmware, so leave dashcamOnly at the default.
-    if not docs:
-      ret.dashcamOnly = candidate not in SUPPORTED_PLATFORMS and not steer_to_zero
-
     carlog.debug({"event": "mazdaRadarVerdict", "radarUnavailable": ret.radarUnavailable,
                   "platformClaim": Bus.radar in DBC[candidate], "g46lRadar": g46l_radar, "steerToZeroEps": steer_to_zero})
 
@@ -76,7 +80,7 @@ class CarInterface(CarInterfaceBase):
     ret.steerActuatorDelay = 0.14
     ret.steerLimitTimer = 0.8
 
-    CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
+    CarInterface.configure_torque_tune(candidate, ret.lateralTuning)
 
     ret.centerToFront = ret.wheelbase * 0.41
 
