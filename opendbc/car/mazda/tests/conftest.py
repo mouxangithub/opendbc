@@ -267,6 +267,12 @@ def addrs(sends) -> list[int]:
   return [a for a, _, _ in sends]
 
 
+def hands_code(dat) -> tuple[int, int, int]:
+  """(HANDS_WARN_3_BITS, HANDS_ON_STEER_WARN, HANDS_ON_STEER_WARN_2) from a CAM_LANEINFO frame."""
+  v = parse_frame(CAM_LANEINFO, dat)
+  return int(v["HANDS_WARN_3_BITS"]), int(v["HANDS_ON_STEER_WARN"]), int(v["HANDS_ON_STEER_WARN_2"])
+
+
 def crz_info(dat) -> tuple[int, bool, bool]:
   """(ACCEL_CMD raw, STOPPING, RESUME_UNLATCHING) from a CRZ_INFO frame."""
   v = parse_frame(CRZ_INFO, dat)

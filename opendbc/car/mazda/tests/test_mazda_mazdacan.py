@@ -11,7 +11,7 @@ import pytest
 
 from opendbc.car.mazda import mazdacan
 from opendbc.car.mazda.values import Buttons
-from opendbc.car.mazda.tests.conftest import CAM_LANEINFO, LEAD_TRACK, parse_frame
+from opendbc.car.mazda.tests.conftest import CAM_LANEINFO, LEAD_TRACK, hands_code, parse_frame
 
 
 def crz_info_reference_checksum(dat):
@@ -34,6 +34,19 @@ def test_alert_command_relays_state_but_not_the_tja_churn(packer):
   out = parse_frame(CAM_LANEINFO, dat)
   assert out["ERR_BIT"] == 1 and out["LINE_VISIBLE"] == 1 and out["LANE_LINES"] == 2 and out["S1"] == 1
   assert out["TJA"] == 0 and out["TJA_TRANSITION"] == 0
+
+
+@pytest.mark.parametrize("steer_required", [False, True])
+def test_alert_command_sends_the_frame_the_cluster_draws(packer, steer_required):
+  # On-car map 2026-09-30: the cluster draws the hands-on-wheel text only with the 0b111 code
+  # and HANDS_ON_STEER_WARN_2 together; (0,1,0), (0,1,1), (7,1,0) and (0,0,1) draw nothing.
+  cam_msg = {"LINE_VISIBLE": 0, "LINE_NOT_VISIBLE": 1, "LANE_LINES": 1, "BIT1": 1,
+             "BIT2": 0, "BIT3": 0, "NO_ERR_BIT": 0, "ERR_BIT": 0,
+             "TJA": 0, "TJA_TRANSITION": 0, "S1": 0, "S1_HBEAM": 0}
+  dat = mazdacan.create_alert_command(packer, cam_msg, ldw=False, steer_required=steer_required)[1]
+  assert hands_code(dat) == ((0b111, 1, 1) if steer_required else (0, 0, 0))
+  out = parse_frame(CAM_LANEINFO, dat)
+  assert out["LDW_WARN_LL"] == 0 and out["LDW_WARN_RL"] == 0
 
 
 WHITE_HUD_BASE = bytes.fromhex("4201000000001040")  # the canonical OFF-family idle base

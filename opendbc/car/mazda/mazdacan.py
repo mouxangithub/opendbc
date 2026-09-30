@@ -177,7 +177,12 @@ def create_alert_command(packer, cam_msg: dict, ldw: bool, steer_required: bool)
     "S1_HBEAM",
   ]}
   values.update({
-    # TODO: what's the difference between all these? do we need to send all?
+    # Mapped on the car (2026-09-30, route 00000267): the cluster draws the hands-on-wheel text
+    # only with HANDS_WARN_3_BITS=7 and HANDS_ON_STEER_WARN_2 together. Either alone, or
+    # HANDS_ON_STEER_WARN alone, is mirrored by the radar into CRZ_CTRL but draws nothing.
+    # The 0b111 code is also what puts the radar into its hands-off state, so the two cannot be
+    # separated. The camera's own frames with HANDS_ON_STEER_WARN are lane-departure warnings
+    # (LDW_WARN_LL / _RL set alongside), not a hands-off warning.
     "HANDS_WARN_3_BITS": 0b111 if steer_required else 0,
     "HANDS_ON_STEER_WARN": steer_required,
     "HANDS_ON_STEER_WARN_2": steer_required,

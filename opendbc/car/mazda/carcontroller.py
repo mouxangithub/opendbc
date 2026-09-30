@@ -29,6 +29,41 @@ TJA_MRCC_TX_PERIOD = 0.2  # s between undo presses
 TJA_MRCC_ARM_WAIT_FRAMES = int(1.0 / DT_CTRL)
 # The white wheel waits this long on a fully-off, quiet cruise before it displays.
 MADS_WHITE_HUD_OFF_CONFIRM_FRAMES = int(0.5 / DT_CTRL)
+# The alert frame's cadence.
+HUD_ALERT_FRAMES = 50
+# The dash hands-on-wheel frame waits this long after lateral or cruise comes on: the driver is
+# on the button, and the EPS-standby banner (1.8 s) can outlive the block that raised it.
+DASH_STEER_WARNING_QUIET_FRAMES = int(2.0 / DT_CTRL)
+
+
+class DashSteerWarning:
+  """When the steerRequired alert also reaches the car's own dash.
+
+  The device alert is the primary channel and is never touched here. The dash frame (the
+  hands-on-wheel code in CAM_LANEINFO, see mazdacan.create_alert_command) mirrors the alert
+  only while openpilot is steering, which keeps it off the dash at a standstill and through an
+  EPS block; never inside the quiet window after lateral or cruise comes on; and, once the
+  driver cancels or touches the brake while the alert is up, not again until the alert clears.
+  The cluster chimes on the frame, so each rule is one chime less at a moment the driver is
+  already acting.
+  """
+
+  def __init__(self):
+    self.lat_active_prev = False
+    self.enabled_prev = False
+    self.brake_prev = False
+    self.quiet_until = 0
+    self.held = False
+
+  def update(self, frame: int, steer_required: bool, lat_active: bool, enabled: bool, brake_pressed: bool) -> bool:
+    if (lat_active and not self.lat_active_prev) or (enabled and not self.enabled_prev):
+      self.quiet_until = frame + DASH_STEER_WARNING_QUIET_FRAMES
+    if steer_required and ((self.enabled_prev and not enabled) or brake_pressed != self.brake_prev):
+      self.held = True
+    if not steer_required:
+      self.held = False
+    self.lat_active_prev, self.enabled_prev, self.brake_prev = lat_active, enabled, brake_pressed
+    return steer_required and lat_active and not self.held and frame >= self.quiet_until
 
 
 class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterface):
@@ -57,6 +92,8 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
     self.release_ramp = None
     self.breakaway_frames = 0
     self.tja_button_prev = False
+    self.dash_steer_warning = DashSteerWarning()
+    self.dash_warning_on_bus = False
     self.mrcc_armed_prev: bool | None = None
     self.mrcc_undo_pending = False
     self.mrcc_undo_saw_armed = False
@@ -251,6 +288,9 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
   def update_hud(self, CC, CC_SP, CS):
     """The alert frame at 2 Hz, mirroring the camera's own HUD state.
 
+    The hands-on-wheel warning is the steerRequired alert above the LKAS speed floor, as
+    DashSteerWarning lets it through.
+
     On a TJA-declared car with MADS active and cruise fully off, the white-wheel TJA=2
     state is XORed into the camera's current payload, but only onto an exact allowlisted
     idle base: TJA=2 is not display-only, the body reads the same frame. Every cruise
@@ -273,11 +313,12 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
                        CC_SP.intelligentCruiseButtonManagement.sendButton in BUTTONS or
                        CC.cruiseControl.cancel or CC.cruiseControl.resume)
 
-    ldw = CC.hudControl.visualAlert == VisualAlert.ldw
-    steer_required = CC.hudControl.visualAlert == VisualAlert.steerRequired
+    visual_alert = CC.hudControl.visualAlert
+    steer_required = visual_alert == VisualAlert.steerRequired
     # TODO: find a way to silence audible warnings so we can add more hud alerts
     steer_required = steer_required and CS.lkas_allowed_speed
-    alert = mazdacan.create_alert_command(self.packer, CS.cam_laneinfo, ldw, steer_required)
+    steer_required = self.dash_steer_warning.update(self.frame, steer_required, CC.latActive, CC.enabled,
+                                                    CS.out.brakePressed)
 
     fsc_raw = CS.cam_laneinfo_raw
     hud_base = mazdacan.white_hud_allowlist_base(fsc_raw)
@@ -286,7 +327,7 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
       CC_SP.mads.active and
       CS.cam_laneinfo_live and
       hud_base is not None and
-      CC.hudControl.visualAlert == VisualAlert.none and
+      visual_alert == VisualAlert.none and
       not button_activity and
       mrcc_off
     )
@@ -295,13 +336,16 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
     else:
       self.mads_white_hud_off_frames = 0
     white = white_allowed and self.mads_white_hud_off_frames >= MADS_WHITE_HUD_OFF_CONFIRM_FRAMES
-    withdraw_now = self.mads_white_hud_on_bus and not white
 
-    # Preserve the normal 2 Hz cadence; the exception is the immediate OEM withdraw.
-    if self.frame % 50 == 0 or withdraw_now:
+    # Preserve the normal 2 Hz cadence; the exception is the immediate withdraw of anything
+    # the last frame asserted.
+    withdraw_now = (self.mads_white_hud_on_bus and not white) or (self.dash_warning_on_bus and not steer_required)
+    if self.frame % HUD_ALERT_FRAMES == 0 or withdraw_now:
+      alert = mazdacan.create_alert_command(self.packer, CS.cam_laneinfo, visual_alert == VisualAlert.ldw, steer_required)
       payload = hud_base if white else alert[1]
       alert = (alert[0], mazdacan.apply_mads_white_hud(fsc_raw, payload, white), alert[2])
       self.mads_white_hud_on_bus = mazdacan.is_mads_white_hud(alert[1])
+      self.dash_warning_on_bus = steer_required
       return [alert]
     return []
 
