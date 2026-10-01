@@ -17,6 +17,15 @@ CAM_LANEINFO_FRESH_FRAMES = int(CarControllerParams.CAM_LANEINFO_FRESH_T / DT_CT
 # Windows at the CANParser's own validity threshold, ten periods; a stricter window would revoke
 # radar ownership on a gap the parser still accepts. {message: (signal, fresh frames)}
 MAIN_CAN_WITNESSES = {"PEDALS": ("ACC_ACTIVE", round(0.2 / DT_CTRL)), "ENGINE_DATA": ("SPEED", round(0.1 / DT_CTRL))}
+# EPB.HOLD_STATE once the body has taken the cruise standstill hold over.
+HOLD_STATE_HOLDING = 3
+
+
+def body_holds(pt) -> bool:
+  """Whether the body ECU owns the standstill hold, from the powertrain parser's values. The body
+  takes the hold whether or not Auto Hold is on, and EPB.HOLD_STATE is what stock MRCC relaxes on.
+  GEAR.BRAKE_HOLD joins it only with Auto Hold armed; on its own it still means the car is held."""
+  return pt["EPB"]["HOLD_STATE"] == HOLD_STATE_HOLDING or pt["GEAR"]["BRAKE_HOLD"] == 1
 
 
 class CarState(CarStateBase, CarStateExt):
@@ -107,7 +116,7 @@ class CarState(CarStateBase, CarStateExt):
     self.radar_session_response = 0
     self.fsc_settled_frames = 0
     # The body ECU owns the standstill brake hold.
-    self.brake_hold = False
+    self.body_hold = False
 
   @property
   def fsc_settled(self) -> bool:
@@ -184,7 +193,7 @@ class CarState(CarStateBase, CarStateExt):
 
     can_gear = int(cp.vl["GEAR"]["GEAR"])
     ret.gearShifter = self.parse_gear_shifter(self.shifter_values.get(can_gear, None))
-    self.brake_hold = cp.vl["GEAR"]["BRAKE_HOLD"] == 1
+    self.body_hold = body_holds(cp.vl)
 
     ret.genericToggle = bool(cp.vl["BLINK_INFO"]["HIGH_BEAMS"])
     ret.leftBlindspot = cp.vl["BSM"]["LEFT_BS_STATUS"] != 0
@@ -422,7 +431,10 @@ class CarState(CarStateBase, CarStateExt):
 
   @staticmethod
   def get_can_parsers(CP, CP_SP):
-    pt_messages = []
+    pt_messages = [
+      # A body without the standstill hold may not send this, so it never gates canValid.
+      ("EPB", float("nan")),
+    ]
     if CP.openpilotLongitudinalControl:
       # Do not require liveness for frames intentionally absent after radar teardown.
       pt_messages.append(("CRZ_INFO", float("nan")))

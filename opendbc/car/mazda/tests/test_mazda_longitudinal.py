@@ -106,7 +106,7 @@ def test_stop_emits_hold_then_relaxes(cc, cs):
   # once the body ECU takes the hold over, stock stops asking for the brakes and so do we
   relaxed = []
   for _ in range(seconds(1.0)):
-    cmd = accel_cmd_raw(step_long(cc, cs, long_state=STOPPING, accel=-1.024, standstill=True, brake_hold=True))
+    cmd = accel_cmd_raw(step_long(cc, cs, long_state=STOPPING, accel=-1.024, standstill=True, body_hold=True))
     if cmd is not None:
       relaxed.append(cmd)
   assert relaxed and set(relaxed) == {round(CarControllerParams.ACCEL_HOLD_LATCHED * 1000)}
@@ -345,12 +345,12 @@ def test_breakaway_ceiling_lowered_by_the_plan_is_walked_down_not_stepped(cc, cs
 def test_missed_pulse_retry_keeps_the_stock_latched_tuple(cc, cs):
   """If the body never answers the pulse the command sits at the relaxed hold under a positive
   plan; the one retry is byte-for-byte the first pulse's shape: stop bits down, command at
-  -1 raw, RESUME_UNLATCHING set, and nothing climbs while GEAR.BRAKE_HOLD stays up."""
+  -1 raw, RESUME_UNLATCHING set, and nothing climbs while the body still holds."""
   for _ in range(seconds(2.0)):
-    step_long(cc, cs, long_state=STOPPING, accel=-1.3, standstill=True, brake_hold=True, **LEAD_4M)
+    step_long(cc, cs, long_state=STOPPING, accel=-1.3, standstill=True, body_hold=True, **LEAD_4M)
   assert cc.stop_and_go.car_has_hold
   rows = crz_info_rows(cc, cs, RELEASE_DEBOUNCE_FRAMES + 2 * RESUME_REPULSE_FRAMES + seconds(1.0),
-                       accel=1.0, standstill=True, brake_hold=True, **LEAD_4M)
+                       accel=1.0, standstill=True, body_hold=True, **LEAD_4M)
   pulses = sum(1 for a, b in zip(rows, rows[1:], strict=False) if b[2] and not a[2])
   assert pulses == 2, f"expected the pulse and exactly one retry, got {pulses}"
   assert all(cmd == -1 and not stop for cmd, stop, unl in rows if unl), "a pulse frame left the latched tuple"
@@ -373,11 +373,11 @@ def test_breakaway_gives_up_so_a_stuck_car_is_not_leaned_on(cc, cs):
 def test_breakaway_never_climbs_against_a_latched_body(cc, cs):
   """Body-latched holds remain pinned until the body acknowledges the release pulse."""
   for _ in range(seconds(2.0)):
-    step_long(cc, cs, long_state=STOPPING, accel=-1.3, standstill=True, brake_hold=True, **LEAD_4M)
+    step_long(cc, cs, long_state=STOPPING, accel=-1.3, standstill=True, body_hold=True, **LEAD_4M)
   assert cc.stop_and_go.car_has_hold
 
   for _ in range(RESUME_UNLATCH_LATCHED_FRAMES + seconds(1.0)):
-    step_long(cc, cs, accel=0.5, standstill=True, brake_hold=True, **LEAD_4M)
+    step_long(cc, cs, accel=0.5, standstill=True, body_hold=True, **LEAD_4M)
     assert cc.accel_last <= CarControllerParams.ACCEL_RESUME_PULSE_MAX + 1e-6, \
       f"breakaway climbed against a still-latched body: {cc.accel_last:.2f}"
 
@@ -416,7 +416,7 @@ def test_latched_release_speaks_the_stock_pulse_shape(cc, cs, drop_wire_frames):
   for _ in range(seconds(0.5)):
     step_long(cc, cs, long_state=STOPPING, accel=-1.5, standstill=False, **LEAD_4M)
   for _ in range(seconds(2.0)):
-    step_long(cc, cs, long_state=STOPPING, accel=-1.3, standstill=True, brake_hold=True, **LEAD_4M)
+    step_long(cc, cs, long_state=STOPPING, accel=-1.3, standstill=True, body_hold=True, **LEAD_4M)
   assert cc.accel_last == pytest.approx(CarControllerParams.ACCEL_HOLD_LATCHED, rel=1e-6, abs=1e-12)
 
   # Model the measured one-to-three-frame body response.
@@ -425,7 +425,7 @@ def test_latched_release_speaks_the_stock_pulse_shape(cc, cs, drop_wire_frames):
   window = RELEASE_DEBOUNCE_FRAMES + RESUME_UNLATCH_LATCHED_FRAMES + seconds(1.0)
   for i in range(window):
     body_holds = pulse_started is None or i < pulse_started + 2 * drop_wire_frames
-    dat = frame(step_long(cc, cs, accel=1.0, standstill=True, brake_hold=body_holds, **LEAD_4M), CRZ_INFO)
+    dat = frame(step_long(cc, cs, accel=1.0, standstill=True, body_hold=body_holds, **LEAD_4M), CRZ_INFO)
     if dat is not None:
       cmd, _, unl = crz_info(dat)
       rows.append((cmd, unl, body_holds))
@@ -451,9 +451,9 @@ def test_latched_release_pulse_starts_at_the_release(cc, cs):
   for _ in range(seconds(0.5)):
     step_long(cc, cs, long_state=STOPPING, accel=-1.5, standstill=False, **LEAD_4M)
   for _ in range(seconds(2.0)):
-    step_long(cc, cs, long_state=STOPPING, accel=-1.3, standstill=True, brake_hold=True, **LEAD_4M)
+    step_long(cc, cs, long_state=STOPPING, accel=-1.3, standstill=True, body_hold=True, **LEAD_4M)
 
-  rows = crz_info_rows(cc, cs, RELEASE_DEBOUNCE_FRAMES + seconds(0.5), accel=1.0, standstill=True, brake_hold=True, **LEAD_4M)
+  rows = crz_info_rows(cc, cs, RELEASE_DEBOUNCE_FRAMES + seconds(0.5), accel=1.0, standstill=True, body_hold=True, **LEAD_4M)
 
   # the stop bits are already down during a body-latched hold, so the pulse's deadline is
   # the debounce itself: it must start on the first wire frame after the plan's request lands

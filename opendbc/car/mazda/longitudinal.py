@@ -37,7 +37,7 @@ class StandstillHold:
     self.repulsed = False
 
   def update(self, long_engaged: bool, stopping: bool, standstill: bool,
-             plan_accel: float, brake_hold: bool, gas_pressed: bool) -> None:
+             plan_accel: float, body_hold: bool, gas_pressed: bool) -> None:
     self.just_released = False
     if not long_engaged:
       self._reset()
@@ -64,7 +64,7 @@ class StandstillHold:
       self.repulsed = False
 
     # Retry one unanswered body-latched release so a positive plan cannot remain blocked.
-    if self.latched_release and not self.holding and standstill and brake_hold and not gas_pressed:
+    if self.latched_release and not self.holding and standstill and body_hold and not gas_pressed:
       self.latched_frames += 1
       if self.latched_frames >= RESUME_REPULSE_FRAMES and not self.repulsed and self.unlatch_frames == 0:
         self.unlatch_frames = RESUME_UNLATCH_LATCHED_FRAMES
@@ -73,7 +73,7 @@ class StandstillHold:
       self.latched_frames = 0
 
     # Body ownership is valid only while the controller still requests a hold.
-    self.car_has_hold = self.holding and standstill and brake_hold
+    self.car_has_hold = self.holding and standstill and body_hold
 
   @property
   def stop_bits(self) -> bool:

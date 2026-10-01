@@ -33,12 +33,12 @@ class TestResumeButton:
     # the release the button used to stand in for: stop bits already relaxed to the body, then
     # the plan asks to move and the unlatch pulse fires with the release
     for _ in range(200):
-      step_long(cc, cs, long_state=LongCtrlState.stopping, accel=-1.024, standstill=True, cruise_engaged=True, brake_hold=True)
+      step_long(cc, cs, long_state=LongCtrlState.stopping, accel=-1.024, standstill=True, cruise_engaged=True, body_hold=True)
     assert cc.stop_and_go.holding and cc.stop_and_go.car_has_hold
     assert not cc.stop_and_go.stop_bits  # body owns the brakes, stock relaxes here
 
     for _ in range(RELEASE_DEBOUNCE_FRAMES):
-      sends = step_long(cc, cs, accel=0.3, standstill=True, cruise_engaged=True, brake_hold=True)
+      sends = step_long(cc, cs, accel=0.3, standstill=True, cruise_engaged=True, body_hold=True)
       assert CRZ_BTNS not in addrs(sends), "CRZ_BTNS written at the release"
     assert not cc.stop_and_go.holding
     assert cc.stop_and_go.resume_unlatching, "the pulse must fire with the release"

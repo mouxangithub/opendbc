@@ -51,7 +51,7 @@ class CarControllerParams:
   # Stock body-latched releases use a nine-frame RESUME_UNLATCHING pulse.
   RESUME_UNLATCH_LATCHED_T = 0.18  # s, 9 wire frames, the latched-family mode
   # Retry one unanswered body-latched release, then return control to the plan.
-  RESUME_REPULSE_T = 1.0  # s after a latched release, GEAR.BRAKE_HOLD still set
+  RESUME_REPULSE_T = 1.0  # s after a latched release, the body still holding
 
   CANCEL_CONTEXT_T = 0.5      # retain wheel-cancel context until PEDALS responds
   CANCEL_SETTLE_T = 0.2       # s a cancel request must hold before the first press; the car answers its own inside it

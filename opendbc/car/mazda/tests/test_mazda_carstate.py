@@ -5,7 +5,7 @@ This file is part of zoompilot and is licensed under the MIT License.
 See the LICENSE.md file in the root directory for more details.
 
 carstate through the real CarInterface and its parsers: the FSC settle gate, stockFcw, the
-radar session response, GEAR.BRAKE_HOLD, the two-master guard, the speed sign unit, cancel
+radar session response, the body hold, the two-master guard, the speed sign unit, cancel
 under braking, cruiseState.standstill and the LKAS non-delivery latch.
 """
 import pytest
@@ -24,6 +24,7 @@ CAM_EMPTY = 0x21d
 CAM_PEDESTRIAN = 0x25d
 CAM_TRAFFIC_SIGNS = 0x35f
 GEAR = 0x228
+EPB = 0x79
 RADAR_UDS_RESP = 0x76c
 
 # Real CAM_LANEINFO prefixes, captured on two CX-5 2022s running the same FSC firmware
@@ -180,27 +181,37 @@ class TestRadarSessionResponse:
     assert not CI.CS.radar_session_refused
 
 
-class TestBrakeHold:
-  """GEAR.BRAKE_HOLD is the body ECU reporting that it owns the standstill hold. Stock relaxes
-  its own command the instant this sets, so the payloads below come straight off the two logs
-  that pinned the signal down: a hold that latched (route caace206f6 seg 8, 0x17 at 1157.34 s)
-  and one that never did (route 00000065 seg 4, stuck at 0x07 while the car crept)."""
+class TestBodyHold:
+  """The body ECU reporting that it owns the standstill hold. EPB.HOLD_STATE is the handshake stock
+  MRCC relaxes on, with or without Auto Hold; GEAR.BRAKE_HOLD joins it only with Auto Hold armed.
+  Payloads are real: device_data 0000012b seg 5 (stock MRCC holding at t+311.3 with GEAR still at
+  0x07), route 118 seg 9 (alpha long, both set at t+560.0) and the 2016.5 CX-5 KE, whose body has
+  no standstill hold."""
 
-  @pytest.mark.parametrize("payload, expected", [
-    ("142007ff02f00000", False),  # hold not taken over: keep braking
-    ("142017ff02f00000", True),   # body has the brakes
-    ("14200fff02f00000", False),  # released again at the resume
+  @pytest.mark.parametrize("epb, gear, expected", [
+    ("df5c3206005f4d4f", "142007ff02f00000", False),  # idle: keep braking
+    ("df463306011f4c58", "142007ff02f00000", True),   # body holds, Auto Hold not in it
+    ("df5c3306009f4952", "142017ff02f00000", True),   # body holds, Auto Hold armed
+    ("df523506005f445d", "142007ff02f00000", False),  # releasing at the resume
+    ("df5a350600df4655", "14200fff02f00000", False),  # releasing, Auto Hold dropping out
+    ("df5c3206005f4d4f", "142017ff02f00000", True),   # Auto Hold alone still holds the car
+    ("dddc0001bd9e0e21", "242807ff04f00000", False),  # KE: no hold to hand over, keep braking
   ])
-  def test_decodes_the_hold_bit(self, payload, expected):
+  def test_decodes_the_hold(self, epb, gear, expected):
     CI = car_interface()
-    # CANParser registers a message lazily on first access, so the first frame only arms it
+    # CANParser registers GEAR lazily on first access, so the first frame only arms it
     for i in range(2):
-      feed(CI, i, (GEAR, bytes.fromhex(payload), 0))
-    assert CI.CS.brake_hold is expected
+      feed(CI, i, (EPB, bytes.fromhex(epb), 0), (GEAR, bytes.fromhex(gear), 0))
+    assert CI.CS.body_hold is expected
 
   def test_defaults_to_not_held(self):
     # nothing parsed yet must read as "the car is not holding", the direction that keeps braking
-    assert not car_interface().CS.brake_hold
+    assert not car_interface().CS.body_hold
+
+  @pytest.mark.parametrize("alpha_long", [False, True])
+  def test_a_body_without_the_frame_keeps_can_valid(self, alpha_long):
+    pt = car_interface(alpha_long=alpha_long).can_parsers[Bus.pt]
+    assert pt.message_states[EPB].ignore_alive
 
 
 def feed_guard(CI, secs, radar_alive, start_frame=0, acc_active=False):

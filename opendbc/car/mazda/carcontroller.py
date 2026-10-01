@@ -387,7 +387,7 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
     long_engaged = CC.enabled and control_ready
     long_active = CC.longActive and control_ready
     sm = self.stop_and_go
-    sm.update(long_engaged, stopping, CS.out.standstill, CC.actuators.accel, CS.brake_hold,
+    sm.update(long_engaged, stopping, CS.out.standstill, CC.actuators.accel, CS.body_hold,
               gas_pressed=CS.out.gasPressed)
     # Lead advertisement represents perception and is independent of engagement.
     self.lead_adv.update(CC.hudControl.leadVisible, CC_SP.leadOne.dRel,
@@ -415,9 +415,9 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
                                     accel + CarControllerParams.ACCEL_BREAKAWAY_OVERSHOOT))
       if self.release_ramp is not None and (self.release_ramp < accel or breakaway):
         # The release ramp owns the command until it reaches the plan. Body-latched holds remain
-        # at the relaxed command until GEAR.BRAKE_HOLD clears.
+        # at the relaxed command until the body lets go.
         accel = self.release_ramp
-        if not (sm.latched_release and CS.brake_hold):
+        if not (sm.latched_release and CS.body_hold):
           # Follow a falling plan ceiling at the winddown limit.
           self.release_ramp = max(min(self.release_ramp + CarControllerParams.ACCEL_RELEASE_RAMP * DT_CTRL, ramp_ceiling),
                                   self.release_ramp + CarControllerParams.ACCEL_WINDDOWN_LIMIT)
