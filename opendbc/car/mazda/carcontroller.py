@@ -31,6 +31,7 @@ TJA_MRCC_ARM_WAIT_FRAMES = int(1.0 / DT_CTRL)
 MADS_WHITE_HUD_OFF_CONFIRM_FRAMES = int(0.5 / DT_CTRL)
 # The alert frame's cadence.
 HUD_ALERT_FRAMES = 50
+CANCEL_SETTLE_FRAMES = int(CarControllerParams.CANCEL_SETTLE_T / DT_CTRL)
 # The dash hands-on-wheel frame waits this long after lateral or cruise comes on: the driver is
 # on the button, and the EPS-standby banner (1.8 s) can outlive the block that raised it.
 DASH_STEER_WARNING_QUIET_FRAMES = int(2.0 / DT_CTRL)
@@ -82,7 +83,7 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
     self.apply_torque_last = 0
     self.driver_torque_samples: deque[float] = deque(maxlen=self.params.STEER_DRIVER_SAMPLES if self.eps_2022 else 1)
     self.packer = CANPacker(dbc_names[Bus.pt])
-    self.brake_counter = 0
+    self.cancel_counter = 0
     self.stop_and_go = StandstillHold()
     self.lead_adv = AdvertisedLead()
     self.long_counter = 0
@@ -150,17 +151,16 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
     # Do not cancel a stock MRCC engagement while the stock radar still owns the bus.
     stock_mrcc_owns_cruise = self.CP.openpilotLongitudinalControl and not CS.radar_was_silenced
     if CC.cruiseControl.cancel and not stock_mrcc_owns_cruise:
-      # If brake is pressed, let us wait >70ms before trying to disable crz to avoid
-      # a race condition with the stock system, where the second cancel from openpilot
-      # will disable the crz 'main on'. crz ctrl msg runs at 50hz. 70ms allows us to
-      # read 3 messages and most likely sync state before we attempt cancel.
-      self.brake_counter = self.brake_counter + 1
-      if self.frame % 10 == 0 and not (CS.out.brakePressed and self.brake_counter < 7):
+      # A CANCEL landing with cruise already off is the stock main-off. The car answers its own
+      # cancels (brake, the wheel button) 60 to 90 ms after openpilot disengages on them, and the
+      # request falls with cruise; upstream waited 70 ms for the brake only. Wait it out for all.
+      self.cancel_counter = self.cancel_counter + 1
+      if self.frame % 10 == 0 and self.cancel_counter >= CANCEL_SETTLE_FRAMES:
         # Cancel Stock ACC if it's enabled while OP is disengaged
         # Send at a rate of 10hz until we sync with stock ACC state
         can_sends.append(mazdacan.create_button_cmd(self.packer, self.CP, CS.crz_btns_counter, Buttons.CANCEL))
     else:
-      self.brake_counter = 0
+      self.cancel_counter = 0
       if self.resume_requested(CC) and self.frame % 5 == 0:
         can_sends.append(mazdacan.create_button_cmd(self.packer, self.CP, CS.crz_btns_counter, Buttons.RESUME))
 

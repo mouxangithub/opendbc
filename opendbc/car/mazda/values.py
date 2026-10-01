@@ -54,6 +54,7 @@ class CarControllerParams:
   RESUME_REPULSE_T = 1.0  # s after a latched release, GEAR.BRAKE_HOLD still set
 
   CANCEL_CONTEXT_T = 0.5      # retain wheel-cancel context until PEDALS responds
+  CANCEL_SETTLE_T = 0.2       # s a cancel request must hold before the first press; the car answers its own inside it
 
   # Debounce movement requests before releasing a standstill hold.
   RELEASE_DEBOUNCE_T = 0.2
