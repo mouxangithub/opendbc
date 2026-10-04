@@ -13,6 +13,7 @@ RESUME_UNLATCH_LATCHED_FRAMES = int(CarControllerParams.RESUME_UNLATCH_LATCHED_T
 RESUME_REPULSE_FRAMES = int(CarControllerParams.RESUME_REPULSE_T / DT_CTRL)
 LEAD_DEBOUNCE_FRAMES = int(CarControllerParams.LEAD_DEBOUNCE_T / DT_CTRL)
 RELEASE_DEBOUNCE_FRAMES = int(CarControllerParams.RELEASE_DEBOUNCE_T / DT_CTRL)
+RELEASE_ACCEL = CarControllerParams.RELEASE_ACCEL
 BREAKAWAY_FRAMES = int(CarControllerParams.ACCEL_BREAKAWAY_T / DT_CTRL)
 
 
@@ -44,8 +45,10 @@ class StandstillHold:
       return
 
     was_holding = self.holding
-    # Debounce plan movement requests; driver throttle releases the hold immediately.
-    self.release_frames = self.release_frames + 1 if plan_accel > 0. else 0
+    # Debounce plan movement requests: opening a hold takes RELEASE_ACCEL, keeping it open any
+    # positive plan. Driver throttle releases the hold immediately.
+    release_accel = RELEASE_ACCEL if was_holding else 0.
+    self.release_frames = self.release_frames + 1 if plan_accel > release_accel else 0
     plan_wants_go = self.release_frames >= RELEASE_DEBOUNCE_FRAMES
     # Keep STOPPING off once the plan or driver requests acceleration.
     release = gas_pressed or plan_wants_go

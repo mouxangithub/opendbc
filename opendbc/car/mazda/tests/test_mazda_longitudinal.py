@@ -307,8 +307,8 @@ def test_release_keeps_climbing_until_the_car_actually_moves(cc, cs):
 
 
 @pytest.mark.parametrize("plan, cap", [
-  # A small plan permits only the configured relative margin.
-  (0.11, 0.11 + CarControllerParams.ACCEL_BREAKAWAY_OVERSHOOT),
+  # A small plan permits only the configured relative margin. Smaller still never opens the hold.
+  (0.3, 0.3 + CarControllerParams.ACCEL_BREAKAWAY_OVERSHOOT),
   # A large plan remains bounded by stock breakaway authority.
   (1.1, CarControllerParams.ACCEL_BREAKAWAY_MAX),
 ], ids=["small_plan", "big_plan"])
