@@ -13,6 +13,8 @@ STOCK_RADAR_ALIVE_FRAMES = int(CarControllerParams.STOCK_RADAR_ALIVE_T / DT_CTRL
 STOCK_RADAR_GUARD_FRAMES = round(CarControllerParams.STOCK_RADAR_GUARD_T / DT_CTRL)
 CANCEL_CONTEXT_FRAMES = int(CarControllerParams.CANCEL_CONTEXT_T / DT_CTRL)
 CAM_LANEINFO_FRESH_FRAMES = int(CarControllerParams.CAM_LANEINFO_FRESH_T / DT_CTRL)
+LKAS_REARM_FRAMES = round(CarControllerParams.LKAS_REARM_T / DT_CTRL)
+LKAS_REARM_FAULT_FRAMES = round(CarControllerParams.LKAS_REARM_FAULT_T / DT_CTRL)
 # Bus witnesses: independent vehicle messages whose silence says the bus is gone, not the radar.
 # Windows at the CANParser's own validity threshold, ten periods; a stricter window would revoke
 # radar ownership on a gap the parser still accepts. {message: (signal, fresh frames)}
@@ -71,6 +73,10 @@ class CarState(CarStateBase, CarStateExt):
     # Last frame's invalidLkasSetting: with the setting off the EPS applies nothing by design,
     # so the non-delivery latch has nothing to measure and must not hold or alert.
     self.lkas_setting_invalid = False
+    # From the setting's return until the EPS has re-armed (update_lkas_arming); card publishes it
+    # as CarStateZP.lkasArming, which keeps lateral reading disabled to the driver meanwhile.
+    self.lkas_arming = False
+    self.lkas_arming_frames = 0
     # The camera's high-beam request, 0x440 BIT2: it rises when the camera wants the lamps high
     # (stock lamps follow within 0.2 s) and the stock radar relays it to CRZ_CTRL bit 13. Under
     # the radar takeover the controller relays it instead.
@@ -134,6 +140,23 @@ class CarState(CarStateBase, CarStateExt):
   def stock_radar_gone(self) -> bool:
     # This silence duration establishes radar ownership rather than a dropped frame.
     return self.radar_bus_healthy and self.stock_radar_silent_frames >= STOCK_RADAR_GUARD_FRAMES
+
+  def update_lkas_arming(self, lkas_setting_invalid: bool) -> None:
+    # Armed on the setting's return (last frame's invalidLkasSetting, before the caller moves
+    # it on) until the EPS lifts its re-arm block, LKAS_REARM_T or more from the edge, or
+    # delivers torque first. A clear block sooner is only the gap before it rises (route
+    # 00000105: clear while off, set 0.02 s after the edge). Delivery alone would be a poor
+    # end: the EPS rounds requests under STEER_UNDELIVERED_MIN to nothing on a straight road.
+    if lkas_setting_invalid:
+      self.lkas_arming = False
+    elif self.lkas_setting_invalid:
+      self.lkas_arming = True
+      self.lkas_arming_frames = 0
+    elif self.lkas_arming:
+      self.lkas_arming_frames += 1
+      rearmed = self.lkas_arming_frames >= LKAS_REARM_FRAMES and not self.lkas_blocked
+      if rearmed or self.lkas_effective != 0:
+        self.lkas_arming = False
 
   def update_steer_undelivered(self, v_ego_raw: float, lkas_request: float) -> None:
     lkas_blocked, lkas_track_state = self.lkas_blocked, self.lkas_track_state
@@ -349,12 +372,15 @@ class CarState(CarStateBase, CarStateExt):
       ret.cruiseState.speedCluster = (cp.vl["CRZ_EVENTS"]["CRZ_SPEED"] / 0.98 + 1.) * CV.KPH_TO_MS
 
     # Stock LKAS must be switched on: the EPS applies no LKAS torque otherwise. LANE_LINES 0 is
-    # upstream's reading of the camera; the CAM_SETTINGS intervention bits are the setting itself,
-    # which the wheel's TJA/LAS button toggles. Either bit set is an enabled setting, both clear is
-    # off. The setting frame is optional, so a car that never sends it reads on.
+    # upstream's reading of the camera, and what the LAS switch produces on a CX-5 2022 (16 of 16
+    # edges follow a 0x9e press; never without one or without ERR_BIT in 66 h of drives). The
+    # CAM_SETTINGS intervention bits are the setting itself, which the wheel's TJA button toggles
+    # on route 00000105. Either bit set is an enabled setting, both clear is off. The setting
+    # frame is optional, so a car that never sends it reads on.
     if len(cp_cam.vl_all["CAM_SETTINGS"]["LKAS_INERVENTION_ON1"]) > 0:
       self.lkas_setting_on = any(cp_cam.vl["CAM_SETTINGS"][s] for s in ("LKAS_INERVENTION_ON1", "ILKAS_NTERVENTION_ON2"))
     ret.invalidLkasSetting = (cam_laneinfo_fresh and cp_cam.vl["CAM_LANEINFO"]["LANE_LINES"] == 0) or not self.lkas_setting_on
+    self.update_lkas_arming(ret.invalidLkasSetting)
     self.lkas_setting_invalid = ret.invalidLkasSetting
 
     if ret.cruiseState.enabled:
@@ -372,6 +398,11 @@ class CarState(CarStateBase, CarStateExt):
     else:
       # Report only sustained road-speed zero delivery after the command has been suppressed.
       ret.steerFaultTemporary = self.steer_undelivered_alert
+    # The re-arm's block is the EPS doing what it always does on the setting's return, and the
+    # driver is already told lateral is off. A soft disable over it would cost MADS its lateral
+    # on the older EPS just as it comes back. Past the window a block is a block again.
+    if self.lkas_arming and self.lkas_arming_frames < LKAS_REARM_FAULT_FRAMES:
+      ret.steerFaultTemporary = False
 
     self.acc_active_last = ret.cruiseState.enabled
 

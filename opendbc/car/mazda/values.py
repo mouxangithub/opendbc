@@ -48,6 +48,12 @@ class CarControllerParams:
   CAM_LANEINFO_PERIOD_T = 0.563
   CAM_LANEINFO_FRESH_T = 1.5
 
+  # The car's lane keep back on, the EPS re-arms: LKAS_BLOCK with TRACK_STATE for 3.00 to 3.08 s
+  # from the edge whatever it is sent, then torque 0.02 to 0.38 s later (7 edges: routes
+  # 0000024d, 00000105, and the camera's ERR recovery on 00000043).
+  LKAS_REARM_T = 3.0           # no lift of the block counts before this
+  LKAS_REARM_FAULT_T = 4.0     # the block it raises is not a fault for this long
+
   # Stock body-latched releases use a nine-frame RESUME_UNLATCHING pulse.
   RESUME_UNLATCH_LATCHED_T = 0.18  # s, 9 wire frames, the latched-family mode
   # Retry one unanswered body-latched release, then return control to the plan.

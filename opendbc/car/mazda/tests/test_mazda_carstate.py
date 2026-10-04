@@ -14,7 +14,7 @@ from opendbc.car import Bus, DT_CTRL
 from opendbc.car import structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.mazda import mazdacan
-from opendbc.car.mazda.carstate import ButtonType, CAM_LANEINFO_FRESH_FRAMES
+from opendbc.car.mazda.carstate import ButtonType, CAM_LANEINFO_FRESH_FRAMES, LKAS_REARM_FRAMES, LKAS_REARM_FAULT_FRAMES
 from opendbc.car.mazda.tests.conftest import car_interface, car_params, car_params_sp, packer
 from opendbc.car.mazda.values import CAR, CarControllerParams
 from opendbc.sunnypilot.car.mazda.values import MazdaFlagsSP
@@ -789,6 +789,102 @@ def test_intervention_bits_become_an_invalid_lkas_setting():
   assert not feed(CI, 12, on1_only)[0].invalidLkasSetting
   on2_only = pk.make_can_msg("CAM_SETTINGS", 2, {"LKAS_INERVENTION_ON1": 0, "ILKAS_NTERVENTION_ON2": 1})
   assert not feed(CI, 13, on2_only)[0].invalidLkasSetting
+
+
+class TestLkasRearm:
+  """lkas_arming spans the EPS's re-arm after the car's lane keep comes back on (LKAS_REARM_T)."""
+
+  SETTING_OFF = {"LKAS_INERVENTION_ON1": 0, "ILKAS_NTERVENTION_ON2": 0}
+  SETTING_ON = {"LKAS_INERVENTION_ON1": 1, "ILKAS_NTERVENTION_ON2": 1}
+
+  def setting(self, rig, values):
+    rig.frame += 1
+    return feed(rig.CI, rig.frame, rig.packer.make_can_msg("CAM_SETTINGS", 2, values))[0]
+
+  def off_then_on(self, rig):
+    assert self.setting(rig, self.SETTING_OFF).invalidLkasSetting
+    assert not rig.CS.lkas_arming
+    for _ in range(50):
+      rig.step(0, 0, 0)
+    assert not self.setting(rig, self.SETTING_ON).invalidLkasSetting
+    assert rig.CS.lkas_arming
+
+  def test_armed_through_the_block_and_back_when_it_lifts(self):
+    rig = UndeliveredRig()
+    self.off_then_on(rig)
+    for _ in range(LKAS_REARM_FRAMES + 7):
+      ret = rig.step(600, 0, 1, track_state=1)
+      assert rig.CS.lkas_arming
+      assert not ret.steerFaultTemporary
+    rig.step(0, 0, 0)
+    assert not rig.CS.lkas_arming
+
+  def test_the_gap_before_the_block_rises_does_not_end_it(self):
+    # route 00000105: no block while the setting is off, set 0.02 s after the edge
+    rig = UndeliveredRig()
+    self.off_then_on(rig)
+    rig.step(0, 0, 0)
+    rig.step(0, 0, 0)
+    assert rig.CS.lkas_arming
+    for _ in range(LKAS_REARM_FRAMES - 3):
+      rig.step(0, 0, 1, track_state=1)
+    assert rig.CS.lkas_arming
+
+  def test_a_clear_block_past_the_window_ends_it_without_a_request(self):
+    # a straight road: requests under STEER_UNDELIVERED_MIN deliver nothing even when healthy
+    rig = UndeliveredRig()
+    self.off_then_on(rig)
+    for _ in range(LKAS_REARM_FRAMES):
+      rig.step(50, 0, 0)
+    assert not rig.CS.lkas_arming
+
+  def test_delivery_ends_it_early(self):
+    rig = UndeliveredRig()
+    self.off_then_on(rig)
+    rig.step(600, 200, 0)
+    assert not rig.CS.lkas_arming
+
+  def test_switched_off_again_hands_back_to_the_setting(self):
+    rig = UndeliveredRig()
+    self.off_then_on(rig)
+    assert self.setting(rig, self.SETTING_OFF).invalidLkasSetting
+    assert not rig.CS.lkas_arming
+
+  def test_the_las_switch_arms_it_too(self):
+    # on a CX-5 2022 the LAS switch reads as LANE_LINES 0 (0x9e, routes 0000024d, 0000027c)
+    rig = UndeliveredRig()
+    rig.frame += 1
+    assert feed(rig.CI, rig.frame, rig.packer.make_can_msg("CAM_LANEINFO", 2, {"LANE_LINES": 0}))[0].invalidLkasSetting
+    rig.frame += 1
+    assert not feed(rig.CI, rig.frame, rig.packer.make_can_msg("CAM_LANEINFO", 2, {"LANE_LINES": 2}))[0].invalidLkasSetting
+    assert rig.CS.lkas_arming
+
+  def test_never_armed_without_the_setting_going_off(self):
+    rig = UndeliveredRig()
+    assert not self.setting(rig, self.SETTING_ON).invalidLkasSetting
+    for _ in range(20):
+      rig.step(600, 0, 1, track_state=1)
+      assert not rig.CS.lkas_arming
+
+  def test_the_older_eps_does_not_soft_disable_over_the_rearm(self):
+    # its steerFaultTemporary is LKAS_BLOCK at road speed: 3 s of it is a soft disable, and MADS
+    # would lose the lateral it is handing back. Past the window a block is a fault again.
+    rig = UndeliveredRig()
+    rig.CI = car_interface(alpha_long=False, candidate=CAR.MAZDA_CX5)
+    rig.CS = rig.CI.CS
+    for _ in range(3):  # its LKAS speed gate reads ENGINE_DATA; one lone frame did not register
+      rig.frame += 1
+      feed(rig.CI, rig.frame, rig.packer.make_can_msg("ENGINE_DATA", 0, {"SPEED": 80.}))
+    for _ in range(5):
+      rig.step(0, 0, 0, speed_kph=80.)
+    assert rig.step(0, 0, 1, speed_kph=80.).steerFaultTemporary, "a block at speed is a fault on this EPS"
+    rig.step(0, 0, 0, speed_kph=80.)
+    self.off_then_on(rig)
+    for _ in range(LKAS_REARM_FAULT_FRAMES - 60):
+      assert not rig.step(600, 0, 1, speed_kph=80.).steerFaultTemporary
+    for _ in range(60):
+      ret = rig.step(600, 0, 1, speed_kph=80.)
+    assert ret.steerFaultTemporary
 
 
 def test_cam_settings_absence_never_reads_as_off():
