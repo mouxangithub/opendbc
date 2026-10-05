@@ -320,6 +320,7 @@ void gen_crc_lookup_table_16(uint16_t poly, uint16_t crc_lut[]) {
 // 1Hz safety function called by main. Now just a check for lagging safety messages
 void safety_tick(const safety_config *cfg) {
   const uint8_t MAX_MISSED_MSGS = 10U;
+  const uint32_t RX_TRNS_TIMEOUT = 1U;
   bool rx_checks_invalid = false;
   uint32_t ts = microsecond_timer_get();
   if (cfg != NULL) {
@@ -340,8 +341,12 @@ void safety_tick(const safety_config *cfg) {
       // enforce minimum frequency for safety-relevant messages
       bool frequency_invalid = !cfg->rx_checks[i].msg[cfg->rx_checks[i].status.index].ignore_frequency_check && (frequency < 10U);
       if (lagging || frequency_invalid || !is_msg_valid(cfg->rx_checks, i)) {
-        rx_checks_invalid = true;
         controls_allowed = false;
+        // a mode change resets every check and the first tick can land before a slow message's first
+        // frame: like the relay check, report one not seen yet only after 1s of transition
+        if (cfg->rx_checks[i].status.msg_seen || (safety_mode_cnt > RX_TRNS_TIMEOUT)) {
+          rx_checks_invalid = true;
+        }
       }
     }
   }

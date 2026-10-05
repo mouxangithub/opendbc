@@ -74,6 +74,14 @@ bool get_relay_malfunction(void){
   return relay_malfunction;
 }
 
+void set_safety_mode_cnt(uint32_t c){
+  safety_mode_cnt = c;
+}
+
+bool get_safety_rx_checks_invalid(void){
+  return safety_rx_checks_invalid;
+}
+
 bool get_gas_pressed_prev(void){
   return gas_pressed_prev;
 }
