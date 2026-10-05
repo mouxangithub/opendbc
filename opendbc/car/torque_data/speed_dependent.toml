@@ -7,11 +7,12 @@
 # One CX-5 2022's learned values (2026-09-29), converted to the flat 1200-count STEER_MAX with
 # the same counts on the wire; 34.5 and 37 m/s take that table's values there. Friction up to
 # 28 m/s was refit on 2026-10-01 from that car's own bins, learned on 1200 with the per-bin
-# freeze fixed. Version 2 retires the stepped-scale caches; the refit is on the same scale, so
-# it keeps them. Provenance and fits: docs/zoompilot/lateral-tune.md, "Seeds".
+# freeze fixed. On 2026-10-04 the six bins through 28 m/s took that car's filtered learned
+# values. Version 2 retires the stepped-scale caches; both refits are on the same scale, so they
+# keep them. Provenance and fits: docs/zoompilot/lateral-tune.md, "Seeds".
 speed_bp    = [6.5, 9.5, 12.0, 16.4, 21.0, 28.0, 34.5, 37.0]
-laf_bp      = [2.41, 2.72, 2.29, 1.72, 1.75, 2.28, 2.54, 2.56]
-friction_bp = [0.232, 0.155, 0.145, 0.147, 0.094, 0.091, 0.071, 0.070]
+laf_bp      = [2.37, 2.63, 2.13, 1.74, 1.85, 2.27, 2.54, 2.56]
+friction_bp = [0.201, 0.145, 0.135, 0.134, 0.104, 0.084, 0.071, 0.070]
 seed_version = 2
 
 [MAZDA_CX9_2021]
