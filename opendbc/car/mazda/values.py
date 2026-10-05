@@ -37,7 +37,7 @@ class CarControllerParams:
   RADAR_UDS_STEP = 50  # radar UDS traffic at 2 Hz: session control or tester present
 
   # Wait for the camera's cold-boot radar check before silencing the radar.
-  FSC_SETTLE_T = 10.0          # observed-settled time before the teardown may start
+  FSC_SETTLE_T = 7.0           # observed-settled time before the teardown may start (check passed from 5.8 s)
   # This alive window detects a normal CRZ_INFO gap but does not establish ownership.
   STOCK_RADAR_ALIVE_T = 0.05
   # Sustained radar silence before ownership is trusted (cruise; the main switch is not gated):
