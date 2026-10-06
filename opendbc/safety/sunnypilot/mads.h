@@ -128,6 +128,10 @@ inline void m_update_control_state(void) {
   if (allowed && m_mads_state.system_enabled && m_mads_state.controls_requested_lateral && !controls_allowed_lateral) {
     m_mads_state.controls_requested_lateral = false;
     controls_allowed_lateral = true;
+    // a fresh engagement starts the heartbeat count over, as controls_allowed's rising edge does
+    // (safety.h). The count a heartbeat exit left at the threshold otherwise ended it on the next
+    // 1 Hz check whenever that check came before openpilot's heartbeat said MADS was on again
+    heartbeat_engaged_mads_mismatches = 0U;
     m_mads_state.current_disengage.active_reason = MADS_DISENGAGE_REASON_NONE;
     m_mads_state.current_disengage.pending_reasons = MADS_DISENGAGE_REASON_NONE;
   }
