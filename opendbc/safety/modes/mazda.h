@@ -37,10 +37,9 @@
 
 // Keep SET/RES intent fresh until PEDALS reports engagement.
 #define MAZDA_ENGAGE_BTN_WINDOW 10U
-// A wheel cancel turns MRCC main off for real, and PEDALS trails the press: keep the context
-// on the 50 Hz PEDALS clock for carstate's CANCEL_CONTEXT_T so the main-off edge lands under
-// braking, where a brake-only bit dropout would otherwise be held.
-#define MAZDA_CANCEL_CONTEXT_FRAMES 25U
+// Both PEDALS cruise bits low for this many samples is a main-off: carstate's
+// MAIN_OFF_DEBOUNCE_T on the PEDALS clock (100 Hz on the bus).
+#define MAZDA_MAIN_OFF_DEBOUNCE 10U
 
 static bool mazda_longitudinal = false;
 // Declared by the driver: the TJA button owns lateral and MRCC no longer drives the main edge.
@@ -50,7 +49,7 @@ static bool mazda_legacy_fw_eps = false;
 // Live cruise arming from PEDALS, both longitudinal modes (carstate mrcc_armed_raw).
 static bool mazda_acc_armed = false;
 static uint32_t mazda_engage_btn_frames = 0U;
-static uint32_t mazda_cancel_context_frames = 0U;
+static uint32_t mazda_main_off_samples = 0U;
 
 static bool mazda_mrcc_off_msg_valid(const CANPacket_t *msg) {
   // Exact active-low MRCC master tap. CTR occupies the variable bits in byte 3;
@@ -152,11 +151,9 @@ static void mazda_rx_hook(const CANPacket_t *msg) {
     }
 
     if ((msg->addr == MAZDA_CRZ_BTNS) && mazda_longitudinal) {
-      // A physical cancel press always exits controls, and explains the main-off that follows.
-      bool cancel = GET_BIT(msg, 0U);
-      if (cancel) {
+      // A physical cancel press always exits controls.
+      if (GET_BIT(msg, 0U)) {
         controls_allowed = false;
-        mazda_cancel_context_frames = MAZDA_CANCEL_CONTEXT_FRAMES;
       }
       // Record SET/RES intent for the engagement qualifier below.
       if (GET_BIT(msg, 2U) || GET_BIT(msg, 4U) || GET_BIT(msg, 5U)) {
@@ -178,28 +175,28 @@ static void mazda_rx_hook(const CANPacket_t *msg) {
       // opens on the frame the controller first sends (the radar's CRZ_CTRL bit lags it).
       mazda_acc_armed = GET_BIT(msg, 2U) || GET_BIT(msg, 3U);
       if (mazda_longitudinal) {
-        // Derive cruise state from PEDALS after radar teardown. Ignore transient brake-only
-        // samples where both cruise bits are low.
+        // Derive cruise state from PEDALS after radar teardown.
         bool cruise_engaged = GET_BIT(msg, 3U);
         bool acc_armed = GET_BIT(msg, 2U) || cruise_engaged;
         bool brake_free = !brake && !brake_pressed_prev;
 
-        // Main mirrors carstate's cruise_available: it follows arming, and a both-low sample is
-        // held under braking unless a wheel cancel explains it. Without the cancel path, main
-        // toggled at a stop with the brake held never falls, the next press has no rising edge,
-        // and MADS runs into 200 rejected frames (route 000001c9--0b2a64a214 seg 0).
+        // Main mirrors carstate's cruise_available sample for sample: it follows arming and falls
+        // after MAZDA_MAIN_OFF_DEBOUNCE both-low samples, brake or no brake. A main that falls on
+        // one side only steers MADS into rejected frames (route 000001c9--0b2a64a214 seg 0).
         if (mazda_tja_button) {
           // the button is the lateral switch; MRCC is cruise only
         } else if (acc_armed) {
           // Main follows PEDALS arming from the first frame; the radar takeover gates cruise
           // (controls_allowed below), never main.
           acc_main_on = true;
-        } else if (brake_free || (mazda_cancel_context_frames > 0U)) {
-          acc_main_on = false;
+          mazda_main_off_samples = 0U;
         } else {
-        }
-        if (mazda_cancel_context_frames > 0U) {
-          mazda_cancel_context_frames -= 1U;
+          if (mazda_main_off_samples < MAZDA_MAIN_OFF_DEBOUNCE) {
+            mazda_main_off_samples += 1U;
+          }
+          if (mazda_main_off_samples >= MAZDA_MAIN_OFF_DEBOUNCE) {
+            acc_main_on = false;
+          }
         }
 
         if (acc_armed || cruise_engaged_prev || brake_free) {
@@ -376,7 +373,7 @@ static bool mazda_fwd_hook(int bus_num, int addr) {
 
 static safety_config mazda_init(uint16_t param) {
   mazda_engage_btn_frames = 0U;
-  mazda_cancel_context_frames = 0U;
+  mazda_main_off_samples = 0U;
   mazda_acc_armed = false;
 
   static const CanMsg MAZDA_TX_MSGS[] = {

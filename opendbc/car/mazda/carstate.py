@@ -11,7 +11,7 @@ ButtonType = structs.CarState.ButtonEvent.Type
 FSC_SETTLE_FRAMES = int(CarControllerParams.FSC_SETTLE_T / DT_CTRL)
 STOCK_RADAR_ALIVE_FRAMES = int(CarControllerParams.STOCK_RADAR_ALIVE_T / DT_CTRL)
 STOCK_RADAR_GUARD_FRAMES = round(CarControllerParams.STOCK_RADAR_GUARD_T / DT_CTRL)
-CANCEL_CONTEXT_FRAMES = int(CarControllerParams.CANCEL_CONTEXT_T / DT_CTRL)
+MAIN_OFF_DEBOUNCE_SAMPLES = round(CarControllerParams.MAIN_OFF_DEBOUNCE_T * 100)  # PEDALS is 100 Hz
 CAM_LANEINFO_FRESH_FRAMES = int(CarControllerParams.CAM_LANEINFO_FRESH_T / DT_CTRL)
 LKAS_REARM_FRAMES = round(CarControllerParams.LKAS_REARM_T / DT_CTRL)
 LKAS_REARM_FAULT_FRAMES = round(CarControllerParams.LKAS_REARM_FAULT_T / DT_CTRL)
@@ -101,7 +101,6 @@ class CarState(CarStateBase, CarStateExt):
     # Unfiltered PEDALS cruise state; the filtered public state bridges brake dropouts.
     self.mrcc_armed_raw = False
     self.cruise_enabled_blocked = True
-    self.brake_pressed_prev = False
     self.stock_radar_silent_frames = 0
     self.stock_radar_seen = False
     self.main_can_silent_frames = {name: fresh for name, (_, fresh) in MAIN_CAN_WITNESSES.items()}
@@ -111,7 +110,7 @@ class CarState(CarStateBase, CarStateExt):
     self.radar_restore_failed = False
     self.radar_handback_active = False
     self.radar_was_silenced = False
-    self.cancel_context_frames = 0
+    self.main_off_samples = 0
     self.cam_laneinfo_seen = False
     self.cam_laneinfo_silent_frames = 0
     # The camera's last CAM_LANEINFO payload and its staleness, for the white-wheel HUD gate.
@@ -289,20 +288,21 @@ class CarState(CarStateBase, CarStateExt):
     self.mrcc_armed_raw = acc_armed or acc_active
 
     if self.CP.openpilotLongitudinalControl:
-      # After radar teardown, derive cruise state from PEDALS. Hold the previous state through
-      # brake-only samples where both cruise bits are transiently low.
-      brake_free = not ret.brakePressed and not self.brake_pressed_prev
-      # Retain wheel-cancel context until PEDALS reflects the main-state change.
-      if cp.vl["CRZ_BTNS"]["CAN_OFF"] == 1:
-        self.cancel_context_frames = CANCEL_CONTEXT_FRAMES
-      elif self.cancel_context_frames > 0:
-        self.cancel_context_frames -= 1
-      if acc_armed or acc_active:
-        self.cruise_available = True
-      elif brake_free or self.cancel_context_frames > 0:
-        self.cruise_available = False
-      if acc_armed or acc_active or self.cruise_enabled or brake_free:
-        self.cruise_enabled = acc_active
+      # After radar teardown, derive cruise state from PEDALS. Main follows arming and falls once
+      # both bits have been low for MAIN_OFF_DEBOUNCE_T of PEDALS samples, counted per sample so
+      # the panda's acc_main_on falls on the same one. Brake or no brake: every both-low run
+      # under braking in the corpus was a real main-off, by CAN_OFF, either main-button encoding,
+      # or no visible button at all.
+      pedals = cp.vl_all["PEDALS"]
+      for off, active in zip(pedals["ACC_OFF"], pedals["ACC_ACTIVE"], strict=True):
+        if off or active:
+          self.cruise_available = True
+          self.main_off_samples = 0
+        else:
+          self.main_off_samples = min(self.main_off_samples + 1, MAIN_OFF_DEBOUNCE_SAMPLES)
+          if self.main_off_samples >= MAIN_OFF_DEBOUNCE_SAMPLES:
+            self.cruise_available = False
+      self.cruise_enabled = acc_active
 
       # Block engagement until stock radar ownership is clear. Radar traffic after a completed
       # teardown is a fault and triggers the alpha-long recovery path.
@@ -360,7 +360,6 @@ class CarState(CarStateBase, CarStateExt):
       # CRZ_AVAILABLE represents adaptive-cruise availability, not the main switch.
       ret.cruiseState.available = cp.vl["CRZ_CTRL"]["CRZ_AVAILABLE"] == 1
       ret.cruiseState.enabled = cp.vl["CRZ_CTRL"]["CRZ_ACTIVE"] == 1
-    self.brake_pressed_prev = ret.brakePressed
     # PEDALS.STANDSTILL means wheels stopped, not ACC hold. Reporting it under openpilot
     # longitudinal would prevent LongControl from leaving its stopping state.
     ret.cruiseState.standstill = cp.vl["PEDALS"]["STANDSTILL"] == 1 and not self.CP.openpilotLongitudinalControl
@@ -406,7 +405,8 @@ class CarState(CarStateBase, CarStateExt):
 
     self.acc_active_last = ret.cruiseState.enabled
 
-    self.crz_btns_counter = cp.vl["CRZ_BTNS"]["CTR"]
+    btns = cp.vl["CRZ_BTNS"]
+    self.crz_btns_counter = btns["CTR"]
 
     # camera signals
     self.cam_lkas = cp_cam.vl["CAM_LKAS"]
@@ -424,25 +424,27 @@ class CarState(CarStateBase, CarStateExt):
     prev_main_button = self.main_button
     prev_mrcc_button = self.mrcc_button
     prev_tja_button = self.tja_button
-    self.distance_button = cp.vl["CRZ_BTNS"]["DISTANCE_LESS"]
-    self.distance_more_button = cp.vl["CRZ_BTNS"]["DISTANCE_MORE"]
+    self.distance_button = btns["DISTANCE_LESS"]
+    self.distance_more_button = btns["DISTANCE_MORE"]
     # SET_P is the wheel's increase button; RES is a distinct resume button.
-    self.accel_button = cp.vl["CRZ_BTNS"]["SET_P"]
-    self.decel_button = cp.vl["CRZ_BTNS"]["SET_M"]
+    self.accel_button = btns["SET_P"]
+    self.decel_button = btns["SET_M"]
     # Publish CAN_OFF so ICBM does not transmit over a physical cancel press.
-    self.cancel_button = cp.vl["CRZ_BTNS"]["CAN_OFF"]
-    self.resume_button = cp.vl["CRZ_BTNS"]["RES"]
-    self.main_button = int(cp.vl["CRZ_BTNS"]["MODE_X"] == 1 and cp.vl["CRZ_BTNS"]["MODE_Y"] == 1)
+    self.cancel_button = btns["CAN_OFF"]
+    self.resume_button = btns["RES"]
+    # The MRCC main button sets MODE_X, MODE_Y or both: MODE_Y alone is a main-on on both the
+    # KE and the 2022 CX-5 (59 of 59 logged), MODE_X alone the KE's main-off (route_ke_0b).
+    self.main_button = int(btns["MODE_X"] == 1 or btns["MODE_Y"] == 1)
     # BIT1 is active-low: a 0 on the bus-0 parser is the wheel's MRCC master press. Gated on
     # the declaration (an undeclared wheel's idle level is unknown) and held unpressed until
     # the wheel's first frame: parser zeros before it would decode as a phantom press.
     if self.CP_SP.flags & MazdaFlagsSP.TJA_BUTTON:
       self.crz_btns_seen = self.crz_btns_seen or len(cp.vl_all["CRZ_BTNS"]["BIT1"]) > 0
-      self.mrcc_button = int(cp.vl["CRZ_BTNS"]["BIT1"] == 0) if self.crz_btns_seen else 0
+      self.mrcc_button = int(btns["BIT1"] == 0) if self.crz_btns_seen else 0
     else:
       self.mrcc_button = 0
     # Only a car declared to have the physical TJA button reports it as the MADS switch.
-    self.tja_button = int(cp.vl["CRZ_BTNS"]["TJA_BUTTON"] == 1) if self.CP_SP.flags & MazdaFlagsSP.TJA_BUTTON else 0
+    self.tja_button = int(btns["TJA_BUTTON"] == 1) if self.CP_SP.flags & MazdaFlagsSP.TJA_BUTTON else 0
 
     ret.buttonEvents = [
       *create_button_events(self.distance_button, prev_distance_button, {1: ButtonType.gapAdjustCruise}),

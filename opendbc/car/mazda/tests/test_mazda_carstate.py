@@ -14,7 +14,7 @@ from opendbc.car import Bus, DT_CTRL
 from opendbc.car import structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.mazda import mazdacan
-from opendbc.car.mazda.carstate import ButtonType, CAM_LANEINFO_FRESH_FRAMES, LKAS_REARM_FRAMES, LKAS_REARM_FAULT_FRAMES
+from opendbc.car.mazda.carstate import ButtonType, CAM_LANEINFO_FRESH_FRAMES, LKAS_REARM_FRAMES, LKAS_REARM_FAULT_FRAMES, MAIN_OFF_DEBOUNCE_SAMPLES
 from opendbc.car.mazda.tests.conftest import car_interface, car_params, car_params_sp, packer
 from opendbc.car.mazda.values import CAR, CarControllerParams
 from opendbc.sunnypilot.car.mazda.values import MazdaFlagsSP
@@ -367,11 +367,13 @@ class TestSpeedSignLimit:
     assert ret_sp.speedLimit == 0.0
 
 
-class TestCancelUnderBraking:
-  """The availability brake-hold exists for brake-only PEDALS samples that arrive with both
-  bits low mid-press. A wheel CANCEL turns the MRCC main state off for real and must land
-  even with the brake down (route 7f9e3ff336 t+484-488: cancel mashed under braking was
-  swallowed until the brake released 4 s later)."""
+class TestMainOffDebounce:
+  """Under alpha long, main is PEDALS arming, debounced off: both bits low for
+  MAIN_OFF_DEBOUNCE_T of samples is a main-off, brake or no brake. It replaces a brake-hold that
+  let a both-low run under braking land only inside a button's context, which missed a cancel
+  mashed under braking (route 7f9e3ff336 t+484-488), the KE's MODE_X main-off at a stop
+  (route_ke_0b seg 3), and a main-off with no visible button (000001f0--b507914e9e seg 0 t+10.69).
+  No both-low run that came back on its own appears in 4026 segments."""
 
   @staticmethod
   def armed_and_silent(CI):
@@ -385,38 +387,57 @@ class TestCancelUnderBraking:
     return pk, n
 
   @staticmethod
-  def feed_pedals(CI, pk, n0, secs, brake, cancel):
+  def feed_pedals(CI, pk, n0, samples, brake, armed=False):
+    # one PEDALS sample per feed
     ret = None
-    n = int(secs / DT_CTRL)
-    for i in range(n0, n0 + n):
-      ret, _ = feed(CI, i, pk.make_can_msg("ENGINE_DATA", 0, {"SPEED": 0}), pk.make_can_msg("PEDALS", 0, {"ACC_OFF": 0, "BRAKE_ON": int(brake)}),
-                    pk.make_can_msg("CRZ_BTNS", 0, {"CAN_OFF": int(cancel)}))
-    return ret, n0 + n
+    for i in range(n0, n0 + samples):
+      ret, _ = feed(CI, i, pk.make_can_msg("ENGINE_DATA", 0, {"SPEED": 0}), pk.make_can_msg("PEDALS", 0, {"ACC_OFF": int(armed), "BRAKE_ON": int(brake)}))
+    return ret, n0 + samples
 
-  def test_brake_only_dropout_is_held(self):
+  @pytest.mark.parametrize("brake", [True, False], ids=["brake", "no_brake"])
+  def test_main_off_lands_after_the_debounce(self, brake):
     CI = car_interface()
     pk, n = self.armed_and_silent(CI)
-    ret, n = self.feed_pedals(CI, pk, n, 1.0, brake=True, cancel=False)
+    ret, n = self.feed_pedals(CI, pk, n, MAIN_OFF_DEBOUNCE_SAMPLES - 1, brake)
     assert ret.cruiseState.available
-
-  def test_cancel_lands_through_the_brake(self):
-    CI = car_interface()
-    pk, n = self.armed_and_silent(CI)
-    ret, n = self.feed_pedals(CI, pk, n, 0.3, brake=True, cancel=True)
+    ret, n = self.feed_pedals(CI, pk, n, 1, brake)
     assert not ret.cruiseState.available
 
-  def test_cancel_context_outlives_the_press(self):
-    # the PEDALS reaction can trail the button: press-and-release while still armed, then the
-    # bits drop only after the button is back up -- the context memory has to carry it
+  def test_short_dropout_is_held(self):
+    CI = car_interface()
+    pk, n = self.armed_and_silent(CI)
+    for _ in range(3):
+      ret, n = self.feed_pedals(CI, pk, n, MAIN_OFF_DEBOUNCE_SAMPLES - 1, brake=True)
+      assert ret.cruiseState.available
+      ret, n = self.feed_pedals(CI, pk, n, 1, brake=True, armed=True)
+
+  def test_main_on_lands_on_one_sample(self):
+    CI = car_interface()
+    pk, n = self.armed_and_silent(CI)
+    _, n = self.feed_pedals(CI, pk, n, MAIN_OFF_DEBOUNCE_SAMPLES, brake=True)
+    ret, n = self.feed_pedals(CI, pk, n, 1, brake=True, armed=True)
+    assert ret.cruiseState.available
+
+  def test_debounce_counts_pedals_samples(self):
+    # the panda counts PEDALS messages: a carstate frame without a fresh sample (a late or lost
+    # PEDALS) must not count, or carstate's main falls ahead of the panda's
     CI = car_interface()
     pk, n = self.armed_and_silent(CI)
     ret = None
-    for i in range(n, n + 5):  # cancel pressed, PEDALS not yet reacting
-      ret, _ = feed(CI, i, pk.make_can_msg("ENGINE_DATA", 0, {"SPEED": 0}), pk.make_can_msg("PEDALS", 0, {"ACC_OFF": 1}),
-                    pk.make_can_msg("CRZ_BTNS", 0, {"CAN_OFF": 1}))
+    for i in range(n, n + 2 * (MAIN_OFF_DEBOUNCE_SAMPLES - 1)):
+      msgs = [pk.make_can_msg("ENGINE_DATA", 0, {"SPEED": 0})]
+      if (i - n) % 2 == 0:
+        msgs.append(pk.make_can_msg("PEDALS", 0, {"ACC_OFF": 0, "BRAKE_ON": 1}))
+      ret, _ = feed(CI, i, *msgs)
     assert ret.cruiseState.available
-    ret, n = self.feed_pedals(CI, pk, n + 5, 0.2, brake=True, cancel=False)
-    assert not ret.cruiseState.available
+
+  def test_debounce_is_the_panda_s(self):
+    import os
+    import re
+    import opendbc.safety
+    header = open(os.path.join(os.path.dirname(opendbc.safety.__file__), "modes", "mazda.h")).read()
+    samples = int(re.search(r"#define MAZDA_MAIN_OFF_DEBOUNCE\s+(\d+)U", header).group(1))
+    assert samples == MAIN_OFF_DEBOUNCE_SAMPLES
 
 
 class TestCruiseStandstill:
@@ -707,10 +728,12 @@ class TestTjaButtonEvents:
     ret = self._btns(CI, pk, 1, TJA_BUTTON=1)
     assert not [be for be in ret.buttonEvents if be.type == self.ButtonType.lkas]
 
-  def test_main_cruise_event_is_unchanged(self):
+  @pytest.mark.parametrize("mode_x, mode_y", [(1, 1), (0, 1), (1, 0)], ids=["both", "mode_y", "ke_mode_x"])
+  def test_main_cruise_event(self, mode_x, mode_y):
+    # either bit alone is a whole main press
     CI, pk = car_interface(alpha_long=False), packer()
     self._btns(CI, pk, 0, MODE_X=0, MODE_Y=0)
-    ret = self._btns(CI, pk, 1, MODE_X=1, MODE_Y=1)
+    ret = self._btns(CI, pk, 1, MODE_X=mode_x, MODE_Y=mode_y)
     assert [be.type for be in ret.buttonEvents] == [self.ButtonType.mainCruise]
 
 

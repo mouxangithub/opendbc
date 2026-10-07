@@ -3,12 +3,16 @@ import unittest
 from collections import deque
 
 from opendbc.car.lateral import apply_driver_steer_torque_limits
+from opendbc.car.mazda.carstate import MAIN_OFF_DEBOUNCE_SAMPLES
 from opendbc.car.mazda.values import CAR, CarControllerParams, MazdaFlags, MazdaSafetyFlags
 from opendbc.car.structs import CarParams
 from opendbc.sunnypilot.car.mazda.values import MazdaSafetyFlagsSP
 from opendbc.safety.tests.libsafety import libsafety_py
 import opendbc.safety.tests.common as common
 from opendbc.safety.tests.common import CANPackerSafety, make_msg
+
+# both-low PEDALS samples before main falls; carstate's test pins mazda.h to the same number
+DEBOUNCE = MAIN_OFF_DEBOUNCE_SAMPLES
 
 
 class TestMazdaSafety(common.CarSafetyTest, common.DriverTorqueSteeringSafetyTest):
@@ -594,79 +598,55 @@ class TestMazdaLongitudinalSafety(TestMazdaSteerToZeroEpsSafety, common.Longitud
     self.assertTrue(self._tx(self._torque_cmd_msg(5)))
     self.assertFalse(self.safety.get_controls_allowed())
 
+  def _main_off(self, samples, brake):
+    for _ in range(samples):
+      self._rx(self._pedals_msg(armed=False, brake=brake))
+
   def test_acc_main_follows_armed_state_both_ways(self):
     # acc_main_on tracks PEDALS arming both ways (main off must still exit)
     self._armed()
-    self._rx(self._pedals_msg(False))
+    self._main_off(DEBOUNCE, brake=False)
     self.assertFalse(self.safety.get_acc_main_on())
     self._rx(self._pedals_msg(True))
     self.assertTrue(self.safety.get_acc_main_on())
     self.assertTrue(self.safety.get_controls_allowed_lateral())
 
-  def test_brake_only_dropout_holds_main(self):
-    # carstate holds cruise_available through a both-low PEDALS sample under braking; the
-    # panda must hold too, or MADS exits on the panda alone and the software steers into
-    # rejections
-    self._armed()
-    for _ in range(10):
-      self._rx(self._pedals_msg(armed=True, brake=True))
-    for _ in range(100):
-      self._rx(self._pedals_msg(armed=False, brake=True))
+  def test_main_off_lands_after_the_debounce(self):
+    # brake or no brake: a cancel mashed under braking (route 7f9e3ff336), the KE's MODE_X
+    # main-off at a stop (route_ke_0b), and a main-off with no visible button all land
+    for brake in (False, True):
+      self._armed()
+      self._main_off(DEBOUNCE - 1, brake)
       self.assertTrue(self.safety.get_acc_main_on())
       self.assertTrue(self.safety.get_controls_allowed_lateral())
-    # the dropout lands once the brake is free
-    self._rx(self._pedals_msg(armed=False, brake=False))
-    self._rx(self._pedals_msg(armed=False, brake=False))
-    self.assertFalse(self.safety.get_acc_main_on())
-    self.assertFalse(self.safety.get_controls_allowed_lateral())
+      self._main_off(1, brake)
+      self.assertFalse(self.safety.get_acc_main_on())
+      self.assertFalse(self.safety.get_controls_allowed_lateral())
 
-  def test_cancel_lands_through_the_brake(self):
-    # route 000001c9--0b2a64a214 seg 0: main toggled at a red light with the brake held. The
-    # software's cancel context let its main fall; the panda's held, so the next main press had
-    # no rising edge, lateral never re-armed, and MADS ran into Controls Mismatch: Lateral
+  def test_short_dropout_is_held(self):
     self._armed()
-    for _ in range(10):
+    for _ in range(3):
+      self._main_off(DEBOUNCE - 1, brake=True)
+      self.assertTrue(self.safety.get_acc_main_on())
       self._rx(self._pedals_msg(armed=True, brake=True))
-    self._rx(self._button_msg(cancel=True))
-    self._rx(self._pedals_msg(armed=False, brake=True))
-    self.assertFalse(self.safety.get_acc_main_on())
+
+  def test_main_toggled_at_a_stop_re_arms(self):
+    # route 000001c9--0b2a64a214 seg 0: main toggled at a red light with the brake held. If
+    # main does not fall here, the next press has no rising edge, lateral never re-arms, and
+    # MADS runs into Controls Mismatch: Lateral
+    self._armed()
+    self._main_off(DEBOUNCE, brake=True)
     self.assertFalse(self.safety.get_controls_allowed_lateral())
-    # main again with the foot still on the brake: a real rising edge, lateral re-arms
-    self._rx(self._button_msg())
-    for _ in range(10):
-      self._rx(self._pedals_msg(armed=False, brake=True))
     self._rx(self._pedals_msg(armed=True, brake=True))
     self.assertTrue(self.safety.get_acc_main_on())
     self.assertTrue(self.safety.get_controls_allowed_lateral())
 
-  def test_cancel_context_outlives_the_press(self):
-    # PEDALS trails the button: the bits can drop after the button is back up
+  def test_cancel_exits_controls_at_once(self):
     self._armed()
+    self.safety.set_controls_allowed(True)
     self._rx(self._button_msg(cancel=True))
-    self._rx(self._button_msg())
-    for _ in range(20):
-      self._rx(self._pedals_msg(armed=True, brake=True))
+    self.assertFalse(self.safety.get_controls_allowed())
     self.assertTrue(self.safety.get_acc_main_on())
-    self._rx(self._pedals_msg(armed=False, brake=True))
-    self.assertFalse(self.safety.get_acc_main_on())
-
-  def test_cancel_context_expires(self):
-    # past the window a both-low sample under braking is a dropout again
-    self._armed()
-    self._rx(self._button_msg(cancel=True))
-    self._rx(self._button_msg())
-    for _ in range(25):
-      self._rx(self._pedals_msg(armed=True, brake=True))
-    self._rx(self._pedals_msg(armed=False, brake=True))
-    self.assertTrue(self.safety.get_acc_main_on())
-
-  def test_cancel_context_is_derived_from_the_software(self):
-    import os
-    import re
-    import opendbc.safety
-    header = open(os.path.join(os.path.dirname(opendbc.safety.__file__), "modes", "mazda.h")).read()
-    frames = int(re.search(r"#define MAZDA_CANCEL_CONTEXT_FRAMES\s+(\d+)U", header).group(1))
-    self.assertEqual(CarControllerParams.CANCEL_CONTEXT_T, frames / 50.)  # PEDALS is 50 Hz
 
   def test_crz_info_active_gated_on_controls(self):
     # ACC_ACTIVE mirrors CRZ_CTRL's gate: an engaged-claiming accel frame must not flow while
