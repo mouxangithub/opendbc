@@ -133,12 +133,15 @@ def create_lfahda_mfc(packer, enabled, lfa_icon):
 
 def create_acc_commands(packer, enabled, accel, upper_jerk, idx, lead_data: CanLeadData,
                         hud_control, set_speed, stopping, long_override, use_fca, CP,
-                        main_cruise_enabled, tuning, ESCC: EnhancedSmartCruiseControl | None = None):
+                        main_cruise_enabled, tuning, soft_hold_active: int = 0,
+                        ESCC: EnhancedSmartCruiseControl | None = None):
   commands = []
 
   def get_scc11_values():
     return {
       "MainMode_ACC": 1 if main_cruise_enabled else 0,
+      # 4 = hold display while soft-hold keeps the car stopped after a cancel
+      "SCCInfoDisplay": 4 if soft_hold_active > 1 else 0,
       "TauGapSet": hud_control.leadDistanceBars,
       "VSetDis": set_speed if enabled else 0,
       "AliveCounterACC": idx % 0x10,
@@ -151,8 +154,10 @@ def create_acc_commands(packer, enabled, accel, upper_jerk, idx, lead_data: CanL
 
   def get_scc12_values():
     scc12_values = {
-      "ACCMode": 2 if enabled and long_override else 1 if enabled else 0,
-      "StopReq": 1 if tuning.stopping else 0,
+      # Soft-hold (cp L10): after a cancel the cruise helper keeps requesting hold, so the
+      # ACC must stay in mode 1 and keep StopReq asserted or the car creeps forward.
+      "ACCMode": 2 if enabled and long_override else 1 if (enabled or soft_hold_active) else 0,
+      "StopReq": 1 if (tuning.stopping or soft_hold_active) else 0,
       "aReqRaw": tuning.desired_accel,
       "aReqValue": tuning.actual_accel,  # stock ramps up and down respecting jerk limit until it reaches aReqRaw
       "CR_VSM_Alive": idx % 0xF,

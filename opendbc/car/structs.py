@@ -114,6 +114,10 @@ class IntelligentCruiseButtonManagement:
     none = auto()
     increase = auto()
     decrease = auto()
+    # sustained hold, emitted at the button message's native rate for as long as the servo
+    # asserts it, for ECUs whose long-press steps a coarse grid (e.g. Mazda +5 mph)
+    increaseHold = auto()
+    decreaseHold = auto()
 
 
 @auto_dataclass
@@ -144,6 +148,10 @@ class CarControlSP:
   leadOne: 'LeadData' = field(default_factory=lambda: LeadData())
   leadTwo: 'LeadData' = field(default_factory=lambda: LeadData())
   intelligentCruiseButtonManagement: 'IntelligentCruiseButtonManagement' = field(default_factory=lambda: IntelligentCruiseButtonManagement())
+  # card-side only, never crosses the wire: asks the car controller to return a
+  # silenced stock ECU to service before an onroad cycle is requested (e.g. the
+  # Mazda radar's default-session hand-back)
+  stockEcuHandBack: bool = auto_field()
 
   @auto_dataclass
   class Param:

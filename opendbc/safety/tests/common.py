@@ -1019,6 +1019,8 @@ class SafetyTest(SafetyTestBase):
               continue
             if attr.startswith('TestHyundaiCanfd') and current_test.startswith('TestHyundaiCanfd'):
               continue
+            if attr.startswith('TestMazdaGen2') and current_test.startswith('TestMazdaGen2'):
+              continue
             if {attr, current_test}.issubset({'TestHyundaiLongitudinalSafety', 'TestHyundaiLongitudinalSafetyCameraSCC', 'TestHyundaiSafetyFCEVLong'}):
               continue
             base_tests = {'TestHyundaiLongitudinalSafety', 'TestHyundaiLongitudinalSafetyCameraSCC', 'TestHyundaiSafetyFCEVLong',
@@ -1258,3 +1260,23 @@ class CarSafetyTest(SafetyTest, MadsSafetyTestBase):
     self.assertFalse(self.safety.get_controls_allowed())
     self.assertFalse(self.safety.get_controls_allowed_lateral())
     self.assertFalse(self.safety.safety_config_valid())
+    self.assertTrue(self.safety.get_safety_rx_checks_invalid())
+
+  def test_safety_tick_mode_transition(self):
+    # the first tick after a mode change can land before a slow message's first frame:
+    # it blocks controls either way, but reports only what was seen until the transition is over
+    for mode_cnt in range(3):
+      for seen in (False, True):
+        with self.subTest(mode_cnt=mode_cnt, seen=seen):
+          self._reset_safety_hooks()
+          self.safety.set_timer(0)
+          if seen:
+            self._rx(self._speed_msg(0))
+          self.safety.set_timer(int(2e6))
+          self.safety.set_safety_mode_cnt(mode_cnt)
+          self.safety.set_controls_allowed(True)
+          self.safety.set_controls_allowed_lateral(True)
+          self.safety.safety_tick_current_safety_config()
+          self.assertFalse(self.safety.get_controls_allowed())
+          self.assertFalse(self.safety.get_controls_allowed_lateral())
+          self.assertEqual(self.safety.get_safety_rx_checks_invalid(), seen or mode_cnt > 1)

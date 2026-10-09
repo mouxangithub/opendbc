@@ -24,12 +24,15 @@
 #include "opendbc/safety/modes/nissan.h"
 #include "opendbc/safety/modes/volkswagen_mlb.h"
 #include "opendbc/safety/modes/volkswagen_mqb.h"
-#include "opendbc/safety/modes/volkswagen_meb.h"
 #include "opendbc/safety/modes/volkswagen_pq.h"
 #include "opendbc/safety/modes/elm327.h"
 #include "opendbc/safety/modes/body.h"
 #include "opendbc/safety/modes/psa.h"
+// CAN FD only modes; a classic CAN build has no way to carry their frames
+#ifdef CANFD
+#include "opendbc/safety/modes/volkswagen_meb.h"
 #include "opendbc/safety/modes/hyundai_canfd.h"
+#endif
 
 uint32_t GET_BYTES(const CANPacket_t *msg, int start, int len) {
   uint32_t ret = 0U;
@@ -320,6 +323,7 @@ void gen_crc_lookup_table_16(uint16_t poly, uint16_t crc_lut[]) {
 // 1Hz safety function called by main. Now just a check for lagging safety messages
 void safety_tick(const safety_config *cfg) {
   const uint8_t MAX_MISSED_MSGS = 10U;
+  const uint32_t RX_TRNS_TIMEOUT = 1U;
   bool rx_checks_invalid = false;
   uint32_t ts = microsecond_timer_get();
   if (cfg != NULL) {
@@ -340,8 +344,12 @@ void safety_tick(const safety_config *cfg) {
       // enforce minimum frequency for safety-relevant messages
       bool frequency_invalid = !cfg->rx_checks[i].msg[cfg->rx_checks[i].status.index].ignore_frequency_check && (frequency < 10U);
       if (lagging || frequency_invalid || !is_msg_valid(cfg->rx_checks, i)) {
-        rx_checks_invalid = true;
         controls_allowed = false;
+        // a mode change resets every check and the first tick can land before a slow message's first
+        // frame: like the relay check, report one not seen yet only after 1s of transition
+        if (cfg->rx_checks[i].status.msg_seen || (safety_mode_cnt > RX_TRNS_TIMEOUT)) {
+          rx_checks_invalid = true;
+        }
       }
     }
   }
@@ -410,7 +418,9 @@ int set_safety_hooks(uint16_t mode, uint16_t param) {
     {SAFETY_CHRYSLER, &chrysler_hooks},
     {SAFETY_SUBARU, &subaru_hooks},
     {SAFETY_VOLKSWAGEN_MQB, &volkswagen_mqb_hooks},
+#ifdef CANFD
     {SAFETY_VOLKSWAGEN_MEB, &volkswagen_meb_hooks},
+#endif
     {SAFETY_NISSAN, &nissan_hooks},
     {SAFETY_NOOUTPUT, &nooutput_hooks},
     {SAFETY_HYUNDAI_LEGACY, &hyundai_legacy_hooks},
@@ -419,7 +429,9 @@ int set_safety_hooks(uint16_t mode, uint16_t param) {
     {SAFETY_FORD, &ford_hooks},
     {SAFETY_RIVIAN, &rivian_hooks},
     {SAFETY_TESLA, &tesla_hooks},
+#ifdef CANFD
     {SAFETY_HYUNDAI_CANFD, &hyundai_canfd_hooks},
+#endif
 #ifdef ALLOW_DEBUG
     {SAFETY_MG, &mg_hooks},
     {SAFETY_CHRYSLER_CUSW, &chrysler_cusw_hooks},
