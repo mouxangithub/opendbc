@@ -70,6 +70,10 @@ non_tested_cars = [
 
   # no uploadable route for this PRC-market patched platform
   TOYOTA.TOYOTA_SIENNA_PATCHED,
+  # no public route yet, the 2016.5 swap car is the only known device-validated KE
+  MAZDA.MAZDA_CX5_KE,
+  # no public route yet, one user car in Japan
+  MAZDA.MAZDA_CX8_2023,
 ]
 
 

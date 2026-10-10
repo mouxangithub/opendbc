@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import unittest
+from collections import deque
 
-from opendbc.car import DT_CTRL
 from opendbc.car.lateral import apply_driver_steer_torque_limits
 from opendbc.car.mazda.carstate import MAIN_OFF_DEBOUNCE_SAMPLES
 from opendbc.car.mazda.values import CAR, CarControllerParams, MazdaFlags, MazdaSafetyFlags
@@ -142,7 +142,7 @@ class TestMazdaSafety(common.CarSafetyTest, common.DriverTorqueSteeringSafetyTes
     values = {"CRZ_ACTIVE": enable}
     return self.packer.make_can_msg_safety("CRZ_CTRL", 0, values)
 
-  def _button_msg(self, resume=False, cancel=False, set_m=False, set_p=False, tja=False):
+  def _button_msg(self, resume=False, cancel=False, set_m=False, set_p=False, tja=False, bus=0):
     values = {
       "TJA_BUTTON": tja,
       "CAN_OFF": cancel,
@@ -154,7 +154,7 @@ class TestMazdaSafety(common.CarSafetyTest, common.DriverTorqueSteeringSafetyTes
       "SET_P": set_p,
       "SET_P_INV": (set_p + 1) % 2,
     }
-    return self.packer.make_can_msg_safety("CRZ_BTNS", 0, values)
+    return self.packer.make_can_msg_safety("CRZ_BTNS", bus, values)
 
   def test_buttons(self):
     # only cancel allows while controls not allowed
@@ -181,16 +181,50 @@ class TestMazdaSafety(common.CarSafetyTest, common.DriverTorqueSteeringSafetyTes
 
   def test_stock_passthrough(self):
     # one sender per address, the Tesla test_stock_lkas_passthrough shape: the camera owns
-    # 0x243/0x440 only while openpilot controls neither axis (stock lane keep and dash LDW
-    # stay live); engaging either axis hands them to openpilot. The fwd hook forwards the
-    # camera copy exactly while the tx hook vetoes ours, and vice versa
-    for stock_active, controls_allowed, controls_allowed_lateral in [(True, False, False), (False, True, False), (False, False, True)]:
+    # 0x243/0x440 whenever openpilot is not steering (stock lane keep, TJA/CTS and dash LDW
+    # stay live); steering hands them to openpilot. The fwd hook forwards the camera copy
+    # exactly while the tx hook vetoes ours, and vice versa. Under MADS lateral is its own
+    # axis, so cruise alone leaves the camera in charge; with MADS off lateral follows cruise
+    for mads in (False, True):
+      self.safety.set_mads_params(mads, False, False)
+      for controls_allowed, controls_allowed_lateral in [(False, False), (True, False), (False, True), (True, True)]:
+        stock_active = not (controls_allowed_lateral or (controls_allowed and not mads))
+        self.safety.set_controls_allowed(controls_allowed)
+        self.safety.set_controls_allowed_lateral(controls_allowed_lateral)
+        for addr, msg in ((0x243, self._torque_cmd_msg(0)), (0x440, self._laneinfo_msg())):
+          fwd_bus = 0 if stock_active else -1
+          self.assertEqual(fwd_bus, self.safety.safety_fwd_hook(2, addr), f"{mads=} {controls_allowed=} {controls_allowed_lateral=} {addr=:#x}")
+          self.assertEqual(not stock_active, self._tx(msg), f"openpilot tx {mads=} {controls_allowed=} {controls_allowed_lateral=} {addr=:#x}")
+    self.safety.set_mads_params(False, False, False)
+
+  def _cam_tja_press(self, ctr=5, **overrides):
+    # the wheel's idle pattern with the TJA bit: 00 09 ff Cx 00 00 00 00
+    values = {"TJA_BUTTON": 1, "DISTANCE_LESS_INV": 1, "BIT1": 1, "BIT2": 1, "BIT3": 1, "CAN_OFF_INV": 1, "RES_INV": 1,
+              "SET_P_INV": 1, "SET_M_INV": 1, "DISTANCE_MORE_INV": 1, "MODE_X_INV": 1, "MODE_Y_INV": 1, "CTR": ctr}
+    values.update(overrides)
+    return self.packer.make_can_msg_safety("CRZ_BTNS", 2, values)
+
+  def test_no_button_reaches_the_camera(self):
+    # openpilot never writes CRZ_BTNS on the camera bus: the TJA press there switches the
+    # car's own lane-keep setting off (CAM_SETTINGS), after which the EPS applies no LKAS torque
+    for mads in (False, True):
+      self.safety.set_mads_params(mads, False, False)
+      for controls_allowed, controls_allowed_lateral in [(False, False), (True, False), (False, True), (True, True)]:
+        self.safety.set_controls_allowed(controls_allowed)
+        self.safety.set_controls_allowed_lateral(controls_allowed_lateral)
+        for ctr in range(16):
+          self.assertFalse(self._tx(self._cam_tja_press(ctr=ctr)), f"{mads=} {controls_allowed=} {controls_allowed_lateral=} {ctr=}")
+        self.assertFalse(self._tx(make_msg(2, 0x09d, 8)))
+    self.safety.set_mads_params(False, False, False)
+
+  def test_tja_button_never_pressed_on_the_car_side(self):
+    # bit 11 on bus 0 would toggle MADS through the rx hook and arm MRCC in the body
+    for controls_allowed in (False, True):
       self.safety.set_controls_allowed(controls_allowed)
-      self.safety.set_controls_allowed_lateral(controls_allowed_lateral)
-      for addr, msg in ((0x243, self._torque_cmd_msg(0)), (0x440, self._laneinfo_msg())):
-        fwd_bus = 0 if stock_active else -1
-        self.assertEqual(fwd_bus, self.safety.safety_fwd_hook(2, addr), f"{addr=:#x} {stock_active=}")
-        self.assertEqual(not stock_active, self._tx(msg), f"openpilot tx {addr=:#x} {stock_active=}")
+      self.assertFalse(self._tx(self._button_msg(tja=True)))
+      self.assertFalse(self._tx(self._button_msg(tja=True, resume=True)))
+      self.assertFalse(self._tx(self._button_msg(tja=True, cancel=True)))
+      self.assertEqual(controls_allowed, self._tx(self._button_msg(resume=True)))
 
 
 class TestMazdaSteerToZeroEpsSafety(TestMazdaSafety):
@@ -220,68 +254,96 @@ class TestMazdaSteerToZeroEpsSafety(TestMazdaSafety):
     self._set_prev_torque(800)
     self.assertFalse(self._tx(self._torque_cmd_msg(801)))
 
-  def _controller_loop(self, cc, cs, frames, driver_seen_by_controller):
-    """Run the real CarController through the compiled safety model, feeding the EPS's echo of
-    the last accepted request back into CarState. frames yields the driver torque the panda
-    samples; the controller sees driver_seen_by_controller(frame) instead, so a stale sample
-    can be staged. Returns (accepted torques by frame, longest run of rejected frames)."""
+  def _controller_loop(self, cc, cs, frames, driver_seen_by_controller, report_delay=1, report=True):
+    """Run the real CarController through the compiled safety model, feeding the panda's
+    rejection report back into CarState report_delay cycles after the refused frame (the report
+    rides the can stream through pandad, one or two card cycles behind on the device). frames
+    yields the driver torque the panda samples; the controller sees driver_seen_by_controller(frame)
+    instead, so a stale sample can be staged. Returns (accepted torques by frame, longest run of
+    rejected frames)."""
     from opendbc.car.mazda.tests.conftest import frame as tx_frame, step
-    echo = 0
+    refused = deque([0] * report_delay, maxlen=report_delay)
     accepted, rejected_run, longest = [], 0, 0
     for i, driver_torque in enumerate(frames, start=1):
       self.safety.set_timer(i * 10_000)
       self._rx(self._torque_driver_msg(driver_torque))
       _, sends = step(cc, cs, long_active=False, enabled=True, lat_active=True, torque=1.0, v_ego=10.,
-                      driver_torque=driver_seen_by_controller(i), lkas_request_echo=echo)
+                      driver_torque=driver_seen_by_controller(i), lkas_rejected=refused[0] if report else 0)
       dat = tx_frame(sends, 0x243)
+      torque = (((dat[0] & 0x0f) << 8) | dat[1]) - 2048
       if self._tx(libsafety_py.make_CANPacket(0x243, 0, dat)):
-        echo = (((dat[0] & 0x0f) << 8) | dat[1]) - 2048
-        accepted.append((i, echo))
+        accepted.append((i, torque))
         rejected_run = 0
+        refused.append(0)
       else:
         rejected_run += 1
         longest = max(longest, rejected_run)
+        refused.append(1 if torque != 0 else 0)
     return accepted, longest
 
-  @staticmethod
-  def _stale_driver_sample(frame):
+  STALE_FRAMES = 8
+
+  @classmethod
+  def _stale_driver_sample(cls, frame):
     # what the controller sees of the -100 push on frames 61 to 72: nothing for eight frames
-    return -100 if 68 < frame <= 72 else 0
+    return -100 if 60 + cls.STALE_FRAMES < frame <= 72 else 0
 
   def test_controller_recovers_the_stream_after_a_rejection(self):
     # A rejection zeroes the panda's rate-limit reference, so every later frame above one step
     # is rejected too and the EPS loses its stream: 1.72 s on route 00000148, 0.75 s on
     # 00000139, 0.63 s on drive_02, each followed by LKAS_FAULT and the camera fault. With the
-    # echo the controller restarts from zero inside a tenth of the EPS's 0.6 s timeout.
+    # panda's own report the controller restarts from zero as soon as it arrives.
     from opendbc.car.mazda.tests.conftest import car_controller, mazda_car_state
-    cc = car_controller(alpha_long=False)
-    cs = mazda_car_state(cc.CP, cc.CP_SP)
-    self.safety.set_controls_allowed(True)
-    # 60 frames ramping clean; the driver then pushes -100 for 12 frames, which the panda's
-    # 6-sample window sees at once while the controller's sample runs 8 frames stale (the route
-    # 00000148 staleness); then both agree again
-    frames = [0] * 60 + [-100] * 12 + [0] * 120
-    accepted, longest = self._controller_loop(cc, cs, frames, self._stale_driver_sample)
-    self.assertGreater(longest, 0, "the stale sample must reject at least one frame")
-    # detection is history + mismatch frames; the restart's first step can be rejected again
-    # while the driver window is still stale, so the bound is a third of the EPS's 0.6 s timeout
-    self.assertLessEqual(longest, 20)
-    # and the ramp rebuilds to the rail afterwards
-    self.assertEqual(accepted[-1][1], accepted[-2][1])
-    self.assertGreater(accepted[-1][1], 500)
+    for report_delay in (1, 2, 3):
+      with self.subTest(report_delay=report_delay):
+        cc = car_controller(alpha_long=False)
+        cs = mazda_car_state(cc.CP, cc.CP_SP)
+        self.safety.set_safety_hooks(CarParams.SafetyModel.mazda, self.SAFETY_PARAM)
+        self.safety.init_tests()
+        self.safety.set_controls_allowed(True)
+        # 60 frames ramping clean; the driver then pushes -100 for 12 frames, which the panda's
+        # 6-sample window sees at once while the controller's sample runs 8 frames stale (the
+        # route 00000148 staleness); then both agree again
+        frames = [0] * 60 + [-100] * 12 + [0] * 120
+        accepted, longest = self._controller_loop(cc, cs, frames, self._stale_driver_sample, report_delay)
+        self.assertGreater(longest, 0, "the stale sample must reject at least one frame")
+        # the restart lands one report behind the refusal, and each restart is refused again
+        # while the controller's driver sample is still stale, so the outage is the staleness
+        # plus the report delay: a sixth of the EPS's 0.6 s timeout at the slowest report
+        self.assertLessEqual(longest, self.STALE_FRAMES + report_delay + 1)
+        # and the ramp rebuilds to the rail afterwards
+        self.assertEqual(accepted[-1][1], accepted[-2][1])
+        self.assertGreater(accepted[-1][1], 500)
 
-  def test_without_the_echo_a_rejection_starves_the_eps(self):
-    # the same scenario with no echo is the failure the captures show: rejected to the end
+  def test_a_lone_rejection_costs_only_the_report_delay(self):
+    # the same closed loop with the controller's sample fresh: the divergence is a single
+    # frame, the panda's rate limits are exceeded by an outside push of the reference, and
+    # the outage is exactly the time the report takes to come back
+    from opendbc.car.mazda.tests.conftest import car_controller, mazda_car_state
+    for report_delay in (1, 2, 3):
+      with self.subTest(report_delay=report_delay):
+        cc = car_controller(alpha_long=False)
+        cs = mazda_car_state(cc.CP, cc.CP_SP)
+        self.safety.set_safety_hooks(CarParams.SafetyModel.mazda, self.SAFETY_PARAM)
+        self.safety.init_tests()
+        self.safety.set_controls_allowed(True)
+        frames = [0] * 200
+        # the panda's reference zeroed from outside after 60 clean frames (a disengage-and-arm
+        # blip the controller never saw); the next command is far above one step
+        self._controller_loop(cc, cs, frames[:60], lambda f: 0, report_delay)
+        self._set_prev_torque(0)
+        accepted, longest = self._controller_loop(cc, cs, frames[60:], lambda f: 0, report_delay)
+        self.assertEqual(longest, report_delay)
+        self.assertGreater(accepted[-1][1], 500)
+
+  def test_without_the_rejection_report_a_rejection_starves_the_eps(self):
+    # the same scenario with no report is the failure the captures show: rejected to the end
     from opendbc.car.mazda.tests.conftest import car_controller, mazda_car_state
     cc = car_controller(alpha_long=False)
     cs = mazda_car_state(cc.CP, cc.CP_SP)
-    cc.recover_from_rejection = lambda CS: None
     self.safety.set_controls_allowed(True)
-    # 60 frames ramping clean; the driver then pushes -100 for 12 frames, which the panda's
-    # 6-sample window sees at once while the controller's sample runs 8 frames stale (the route
-    # 00000148 staleness); then both agree again
     frames = [0] * 60 + [-100] * 12 + [0] * 120
-    _, longest = self._controller_loop(cc, cs, frames, self._stale_driver_sample)
+    _, longest = self._controller_loop(cc, cs, frames, self._stale_driver_sample, report=False)
     self.assertGreaterEqual(longest, 60, "the EPS 0x243 timeout is about 60 frames")
 
 
@@ -439,6 +501,18 @@ class TestMazdaLongitudinalSafety(TestMazdaSteerToZeroEpsSafety, common.Longitud
         for addr, dat in radar_messages.items():
           self.assertTrue(self._tx(common.make_msg(bus, addr, 8, dat)))
 
+  def test_g46l_radar_static_allowed(self):
+    # the 2016.5 G46L body's own static capture; the 2022 one above is not its frame, and
+    # the G46L never sends track messages at all
+    for controls_allowed in (False, True):
+      self.safety.set_controls_allowed(controls_allowed)
+      for bus in (0, 2):
+        self.assertTrue(self._tx(common.make_msg(bus, 0x499, 8, bytes.fromhex("0098400000000000"))))
+
+    self.safety.set_controls_allowed(True)
+    for bus in (0, 2):
+      self.assertFalse(self._tx(common.make_msg(bus, 0x499, 8, bytes.fromhex("0098400100000000"))))
+
   def test_synthetic_lead_radar_track_allowed_disengaged(self):
     # Permit the measurement fields while requiring the occupied-track template. The slot is
     # perception, not actuation, so it remains valid with controls_allowed low like stock radar
@@ -505,131 +579,43 @@ class TestMazdaLongitudinalSafety(TestMazdaSteerToZeroEpsSafety, common.Longitud
       self.safety.set_controls_allowed(True)
       self.assertTrue(self._tx(self._crz_ctrl_cmd_msg(True, bus)))
 
-  # a stock armed-idle CRZ_INFO standby frame, checksum-correct: what the controller emits
-  # from the moment the radar teardown lands
-  SYNTHETIC_CRZ_INFO_STANDBY = bytes.fromhex("01ffe3ffc000005d")
-
-  def _acc_armed_msg(self, armed):
+  def _pedals_msg(self, armed, brake=0):
     # PEDALS with MRCC armed-but-idle (ACC_OFF), the state that persists across ignition
-    values = {"ACC_OFF": armed, "BRAKE_ON": 0}
+    values = {"ACC_OFF": armed, "BRAKE_ON": brake}
     return self.packer.make_can_msg_safety("PEDALS", 0, values)
 
-  def test_acc_main_waits_for_the_radar_mastery_latch(self):
-    # MADS uses acc_main_on's rising edge while software waits for stock-radar silence. panda
-    # cannot receive stock CRZ_INFO because it goes stale at teardown, so it
-    # mirrors the latch off the observable stand-in: our own first synthetic CRZ_INFO tx
-    # (= the teardown landing) plus 1 s of the 50 Hz PEDALS clock. Both machines then arm on
-    # the same frame; before that, MRCC-armed PEDALS must not raise acc_main_on, or the edge
-    # is consumed at boot and the software's later MADS window transmits into rejections
-    # that starve the EPS of 0x243.
+  def _armed(self):
+    # one armed PEDALS sample is main: no radar takeover, no synthetic frame, no latch
     self.safety.set_mads_params(True, False, False)
-    # boot: teardown not landed yet, MRCC main armed from the first frame
-    for _ in range(120):
-      self._rx(self._acc_armed_msg(True))
-      self.assertFalse(self.safety.get_acc_main_on())
-      self.assertFalse(self.safety.get_controls_allowed_lateral())
-    self.assertFalse(self._tx(self._torque_cmd_msg(5)))
-    # the teardown lands: the controller starts replaying the radar
-    self.assertTrue(self._tx(common.make_msg(0, 0x21b, 8, self.SYNTHETIC_CRZ_INFO_STANDBY)))
-    # the latch completes after 1 s of the 50 Hz PEDALS clock
-    for _ in range(50):
-      self.assertFalse(self.safety.get_acc_main_on())
-      self._rx(self._acc_armed_msg(True))
+    self._rx(self._pedals_msg(True))
     self.assertTrue(self.safety.get_acc_main_on())
     self.assertTrue(self.safety.get_controls_allowed_lateral())
+
+  def test_acc_main_follows_armed_state_from_boot(self):
+    # MADS lateral needs only the main switch; the radar takeover gates cruise (controls_allowed
+    # needs a SET-qualified engaged edge)
+    self._armed()
     self.assertTrue(self._tx(self._torque_cmd_msg(5)))
-
-  def test_software_guard_is_derived_from_the_pandas(self):
-    # values.py derives STOCK_RADAR_GUARD_T so the software's MADS edge trails this file's
-    # latch; the derivation's panda term has to be this file's constant, not a copy of it
-    import os
-    import re
-    import opendbc.safety
-    header = open(os.path.join(os.path.dirname(opendbc.safety.__file__), "modes", "mazda.h")).read()
-    silent_frames = int(re.search(r"#define MAZDA_RADAR_SILENT_FRAMES\s+(\d+)U", header).group(1))
-    self.assertEqual(CarControllerParams.PANDA_RADAR_SILENT_T, silent_frames / 50.)  # PEDALS is 50 Hz
-    self.assertGreater(CarControllerParams.STOCK_RADAR_GUARD_MARGIN_T, 0.)
-    self.assertEqual(CarControllerParams.STOCK_RADAR_GUARD_T,
-                     CarControllerParams.STOCK_RADAR_ALIVE_T + CarControllerParams.LONG_STEP * DT_CTRL +
-                     CarControllerParams.PANDA_RADAR_SILENT_T + CarControllerParams.STOCK_RADAR_GUARD_MARGIN_T)
-
-  def test_panda_arms_lateral_before_the_carstate_guard_lifts(self):
-    # Both MADS machines arm off their own radar-silence guard, and the software's must complete
-    # strictly AFTER the panda's: if the software arms first the controller ramps torque from
-    # zero at STEER_DELTA_UP per frame into a panda that still rejects every 0x243, and when the
-    # panda then arms, its rate limiter (desired_torque_last = 0) allows one step, rejects the
-    # 36-84 counts by then commanded, resets, and keeps rejecting until the command falls back
-    # under a step -- the 0x243 starvation that latched the camera fault on routes 116/117.
-    # Same PEDALS frames to both machines; the stock CRZ_INFO only the software sees; our first
-    # synthetic CRZ_INFO tx at the controller's latest possible frame (alive window + LONG_STEP).
-    from opendbc.can import CANPacker
-    from opendbc.car import gen_empty_fingerprint
-    from opendbc.car.mazda import mazdacan
-    from opendbc.car.mazda.carstate import STOCK_RADAR_ALIVE_FRAMES, STOCK_RADAR_GUARD_FRAMES
-    from opendbc.car.mazda.interface import CarInterface
-    self.safety.set_mads_params(True, False, False)
-    CP = CarInterface.get_params(CAR.MAZDA_CX5_2022, gen_empty_fingerprint(), [], alpha_long=True, is_release=False, docs=False)
-    CP_SP = CarInterface.get_params_sp(CP, CAR.MAZDA_CX5_2022, gen_empty_fingerprint(), [], alpha_long=True,
-                                       is_release_sp=False, docs=False)
-    CI = CarInterface(CP, CP_SP)
-    packer = CANPacker("mazda_2017")
-    pedals = packer.make_can_msg("PEDALS", 0, {"ACC_OFF": 1})
-    last_stock = 200  # 100 Hz control frames; the stock radar's last CRZ_INFO lands here
-    first_tx = last_stock + STOCK_RADAR_ALIVE_FRAMES + CarControllerParams.LONG_STEP
-    panda_armed_at = software_armed_at = None
-    for i in range(last_stock + 3 * STOCK_RADAR_GUARD_FRAMES):
-      msgs = []
-      if i % 2 == 0:  # the 50 Hz PEDALS clock, MRCC main armed from the first frame
-        self._rx(self._acc_armed_msg(True))
-        msgs.append(pedals)
-        if i <= last_stock:
-          msgs.append(mazdacan.create_acc_command(packer, 0, i // 2, 0., long_active=False, acc_available=True))
-      ret, _ = CI.update([(int(i * DT_CTRL * 1e9), [(m[0], m[1], m[2]) for m in msgs])])
-      if i == first_tx:
-        self.assertTrue(self._tx(common.make_msg(0, 0x21b, 8, self.SYNTHETIC_CRZ_INFO_STANDBY)))
-      if panda_armed_at is None and self.safety.get_controls_allowed_lateral():
-        panda_armed_at = i
-      if software_armed_at is None and ret.cruiseState.available:
-        software_armed_at = i
-    self.assertIsNotNone(panda_armed_at)
-    self.assertIsNotNone(software_armed_at)
-    self.assertGreater(software_armed_at, panda_armed_at, msg="the software armed MADS before the panda would accept torque")
-    # by roughly the margin values.py budgets for PEDALS jitter and pipeline latency
-    margin_frames = int(CarControllerParams.STOCK_RADAR_GUARD_MARGIN_T / DT_CTRL)
-    self.assertGreaterEqual(software_armed_at - panda_armed_at, margin_frames - 2)
-    # and the panda's edge has not been consumed by the time the software arrives
-    self.assertTrue(self.safety.get_controls_allowed_lateral())
-    self.assertTrue(self._tx(self._torque_cmd_msg(5)))
-
-  def test_camera_bus_radar_tx_does_not_master(self):
-    # only the main-bus replay marks mastery; the camera-bus copy is a duplicate
-    self.safety.set_mads_params(True, False, False)
-    self.assertTrue(self._tx(common.make_msg(2, 0x21b, 8, self.SYNTHETIC_CRZ_INFO_STANDBY)))
-    for _ in range(60):
-      self._rx(self._acc_armed_msg(True))
-    self.assertFalse(self.safety.get_acc_main_on())
-
-  def test_acc_main_follows_armed_state_after_the_latch(self):
-    # after the latch, acc_main_on tracks PEDALS arming both ways (main off must still exit)
-    self.safety.set_mads_params(True, False, False)
-    self.assertTrue(self._tx(common.make_msg(0, 0x21b, 8, self.SYNTHETIC_CRZ_INFO_STANDBY)))
-    for _ in range(60):
-      self._rx(self._acc_armed_msg(True))
-    self.assertTrue(self.safety.get_acc_main_on())
-    self._main_off(DEBOUNCE, brake=False)
-    self.assertFalse(self.safety.get_acc_main_on())
-    self._rx(self._acc_armed_msg(True))
-    self.assertTrue(self.safety.get_acc_main_on())
+    self.assertFalse(self.safety.get_controls_allowed())
 
   def _main_off(self, samples, brake):
     for _ in range(samples):
       self._rx(self._pedals_msg(armed=False, brake=brake))
 
+  def test_acc_main_follows_armed_state_both_ways(self):
+    # acc_main_on tracks PEDALS arming both ways (main off must still exit)
+    self._armed()
+    self._main_off(DEBOUNCE, brake=False)
+    self.assertFalse(self.safety.get_acc_main_on())
+    self._rx(self._pedals_msg(True))
+    self.assertTrue(self.safety.get_acc_main_on())
+    self.assertTrue(self.safety.get_controls_allowed_lateral())
+
   def test_main_off_lands_after_the_debounce(self):
     # brake or no brake: a cancel mashed under braking (route 7f9e3ff336), the KE's MODE_X
     # main-off at a stop (route_ke_0b), and a main-off with no visible button all land
     for brake in (False, True):
-      self._armed_and_latched()
+      self._armed()
       self._main_off(DEBOUNCE - 1, brake)
       self.assertTrue(self.safety.get_acc_main_on())
       self.assertTrue(self.safety.get_controls_allowed_lateral())
@@ -638,7 +624,7 @@ class TestMazdaLongitudinalSafety(TestMazdaSteerToZeroEpsSafety, common.Longitud
       self.assertFalse(self.safety.get_controls_allowed_lateral())
 
   def test_short_dropout_is_held(self):
-    self._armed_and_latched()
+    self._armed()
     for _ in range(3):
       self._main_off(DEBOUNCE - 1, brake=True)
       self.assertTrue(self.safety.get_acc_main_on())
@@ -648,24 +634,19 @@ class TestMazdaLongitudinalSafety(TestMazdaSteerToZeroEpsSafety, common.Longitud
     # route 000001c9--0b2a64a214 seg 0: main toggled at a red light with the brake held. If
     # main does not fall here, the next press has no rising edge, lateral never re-arms, and
     # MADS runs into Controls Mismatch: Lateral
-    self._armed_and_latched()
+    self._armed()
     self._main_off(DEBOUNCE, brake=True)
     self.assertFalse(self.safety.get_controls_allowed_lateral())
     self._rx(self._pedals_msg(armed=True, brake=True))
     self.assertTrue(self.safety.get_acc_main_on())
     self.assertTrue(self.safety.get_controls_allowed_lateral())
 
-  def _pedals_msg(self, armed, brake):
-    values = {"ACC_OFF": armed, "BRAKE_ON": brake}
-    return self.packer.make_can_msg_safety("PEDALS", 0, values)
-
-  def _armed_and_latched(self):
-    self.safety.set_mads_params(True, False, False)
-    self.assertTrue(self._tx(common.make_msg(0, 0x21b, 8, self.SYNTHETIC_CRZ_INFO_STANDBY)))
-    for _ in range(60):
-      self._rx(self._acc_armed_msg(True))
+  def test_cancel_exits_controls_at_once(self):
+    self._armed()
+    self.safety.set_controls_allowed(True)
+    self._rx(self._button_msg(cancel=True))
+    self.assertFalse(self.safety.get_controls_allowed())
     self.assertTrue(self.safety.get_acc_main_on())
-    self.assertTrue(self.safety.get_controls_allowed_lateral())
 
   def test_crz_info_active_gated_on_controls(self):
     # ACC_ACTIVE mirrors CRZ_CTRL's gate: an engaged-claiming accel frame must not flow while
@@ -680,34 +661,14 @@ class TestMazdaLongitudinalSafety(TestMazdaSteerToZeroEpsSafety, common.Longitud
         self.assertTrue(self._tx(msg))
 
 
-class TestMazdaIgnition(unittest.TestCase):
-  TX_MSGS: list = []
-
-  def setUp(self):
-    self.safety = libsafety_py.libsafety
-    self.safety.init_tests()
-
-  def _msg(self, byte0):
-    return make_msg(0, 0x9E, dat=bytes([byte0]) + b"\x00" * 7)
-
-  # 0x9E byte 0 high 3 bits == 6 (0xC0)
-  def test_ignition_on(self):
-    self.safety.ignition_can_hook(self._msg(0xC0))
-    self.assertTrue(self.safety.get_ignition_can())
-
-  def test_ignition_off(self):
-    self.safety.ignition_can_hook(self._msg(0xC0))
-    self.assertTrue(self.safety.get_ignition_can())
-    self.safety.ignition_can_hook(self._msg(0x20))
-    self.assertFalse(self.safety.get_ignition_can())
-
-
 class TestMazdaTjaMads(unittest.TestCase):
   """The physical TJA button as the MADS lateral switch, declared by the driver.
 
   The button is fitted to some trims only and neither MAZDA_CX5_2022 nor MAZDA_CX9_2021
-  predicts it, so a sunnypilot safety param carries the driver's declaration. Without it every
-  car keeps the MRCC-derived main edge and bit 11 is ignored.
+  predicts it, so a sunnypilot safety param carries the driver's declaration. Declared, bit 11
+  drives the MADS button and MRCC no longer touches the main edge in either direction: its
+  falling edge would otherwise exit the panda's lateral while the software's MADS stays on.
+  Undeclared cars keep the MRCC-derived main edge and bit 11 is ignored.
   """
 
   def setUp(self):
@@ -715,20 +676,24 @@ class TestMazdaTjaMads(unittest.TestCase):
     self.safety = libsafety_py.libsafety
     self._init(tja_button=False)
 
-  def _init(self, tja_button):
+  def _init(self, tja_button, param=0):
     self.safety.set_current_safety_param_sp(MazdaSafetyFlagsSP.TJA_BUTTON if tja_button else 0)
-    self.safety.set_safety_hooks(CarParams.SafetyModel.mazda, 0)
+    self.safety.set_safety_hooks(CarParams.SafetyModel.mazda, param)
     self.safety.init_tests()
     self.safety.set_mads_params(True, False, False)
 
   def tearDown(self):
     self.safety.set_current_safety_param_sp(0)
+    self.safety.set_mads_params(False, False, False)
 
   def _btns(self, tja=False):
     return self.packer.make_can_msg_safety("CRZ_BTNS", 0, {"TJA_BUTTON": tja})
 
   def _crz_ctrl(self, main_on):
     return self.packer.make_can_msg_safety("CRZ_CTRL", 0, {"CRZ_AVAILABLE": main_on})
+
+  def _pedals(self, acc_off):
+    return self.packer.make_can_msg_safety("PEDALS", 0, {"ACC_OFF": acc_off})
 
   def test_undeclared_keeps_mrcc_path_and_ignores_the_bit(self):
     self.safety.safety_rx_hook(self._btns(True))
@@ -766,9 +731,21 @@ class TestMazdaTjaMads(unittest.TestCase):
     self.safety.safety_rx_hook(self._btns(False))
     self.assertTrue(self.safety.get_controls_allowed_lateral())
 
-    # MRCC going off produces no falling edge and cannot disengage lateral.
+    # the MRCC master button (route 00000018 seg 12) disarms MRCC and the camera, not MADS:
+    # no falling edge here, so the panda's lateral stays with the software's
     self.safety.safety_rx_hook(self._crz_ctrl(False))
     self.assertFalse(self.safety.get_acc_main_on())
+    self.assertTrue(self.safety.get_controls_allowed_lateral())
+
+  def test_declared_button_under_openpilot_longitudinal(self):
+    # the PEDALS-derived main edge is guarded the same way
+    self._init(tja_button=True, param=MazdaSafetyFlags.LONG | MazdaSafetyFlags.STEER_TO_ZERO_EPS)
+    self.safety.safety_rx_hook(self._pedals(True))
+    self.assertFalse(self.safety.get_acc_main_on())
+    self.safety.safety_rx_hook(self._btns(True))
+    self.safety.safety_rx_hook(self._btns(False))
+    self.assertTrue(self.safety.get_controls_allowed_lateral())
+    self.safety.safety_rx_hook(self._pedals(False))
     self.assertTrue(self.safety.get_controls_allowed_lateral())
 
   def test_declaration_is_read_at_init(self):
@@ -779,6 +756,116 @@ class TestMazdaTjaMads(unittest.TestCase):
     self._init(tja_button=False)
     self.safety.safety_rx_hook(self._crz_ctrl(True))
     self.assertTrue(self.safety.get_acc_main_on())
+
+
+class TestMazdaIgnition(unittest.TestCase):
+  TX_MSGS: list = []
+
+  def setUp(self):
+    self.safety = libsafety_py.libsafety
+    self.safety.init_tests()
+
+  def _msg(self, byte0):
+    return make_msg(0, 0x9E, dat=bytes([byte0]) + b"\x00" * 7)
+
+  # 0x9E byte 0 high 3 bits == 6 (0xC0)
+  def test_ignition_on(self):
+    self.safety.ignition_can_hook(self._msg(0xC0))
+    self.assertTrue(self.safety.get_ignition_can())
+
+  def test_ignition_off(self):
+    self.safety.ignition_can_hook(self._msg(0xC0))
+    self.assertTrue(self.safety.get_ignition_can())
+    self.safety.ignition_can_hook(self._msg(0x20))
+    self.assertFalse(self.safety.get_ignition_can())
+
+
+class TestMazdaMrccOffCleanup(unittest.TestCase):
+  """The exact-bytes MRCC master tap that undoes the arm a physical TJA press causes."""
+
+  # Nonzero signals only; unlisted DBC signals pack as 0 (see create_mrcc_off_cmd).
+  MRCC_OFF_VALUES = {
+    "CAN_OFF_INV": 1, "SET_P_INV": 1, "RES_INV": 1, "SET_M_INV": 1,
+    "DISTANCE_LESS_INV": 1, "DISTANCE_MORE_INV": 1, "MODE_X_INV": 1, "MODE_Y_INV": 1,
+    "BIT1_INV": 1, "BIT2": 1, "BIT3": 1, "CTR": 4,
+  }
+
+  def setUp(self):
+    self.packer = CANPackerSafety("mazda_2017")
+    self.safety = libsafety_py.libsafety
+    self._init(tja_button=True)
+
+  def _init(self, tja_button, param=0):
+    self.safety.set_current_safety_param_sp(MazdaSafetyFlagsSP.TJA_BUTTON if tja_button else 0)
+    self.safety.set_safety_hooks(CarParams.SafetyModel.mazda, param)
+    self.safety.init_tests()
+    self.safety.set_mads_params(True, False, False)
+
+  def tearDown(self):
+    self.safety.set_current_safety_param_sp(0)
+    self.safety.set_mads_params(False, False, False)
+
+  def _mrcc_off(self, **over):
+    values = dict(self.MRCC_OFF_VALUES)
+    values.update(over)
+    return self.packer.make_can_msg_safety("CRZ_BTNS", 0, values)
+
+  def _crz_ctrl(self, armed):
+    return self.packer.make_can_msg_safety("CRZ_CTRL", 0, {"CRZ_AVAILABLE": armed})
+
+  def _pedals(self, acc_off):
+    return self.packer.make_can_msg_safety("PEDALS", 0, {"ACC_OFF": acc_off})
+
+  def test_exact_tap_allowed_declared_and_armed(self):
+    # not controlling: this is the whole point of the exception
+    self.safety.safety_rx_hook(self._pedals(True))
+    self.assertTrue(self.safety.safety_tx_hook(self._mrcc_off()))
+
+  def test_exact_tap_blocked_undeclared(self):
+    self._init(tja_button=False)
+    self.safety.safety_rx_hook(self._pedals(True))
+    self.assertFalse(self.safety.safety_tx_hook(self._mrcc_off()))
+
+  def test_exact_tap_blocked_when_cruise_not_armed(self):
+    self.safety.safety_rx_hook(self._pedals(False))
+    self.assertFalse(self.safety.safety_tx_hook(self._mrcc_off()))
+
+  def test_arm_reads_pedals_not_the_radar_under_stock_long(self):
+    # carstate sends on PEDALS; the radar's CRZ_CTRL bit lags it and must not be the gate
+    self.safety.safety_rx_hook(self._crz_ctrl(True))
+    self.assertFalse(self.safety.safety_tx_hook(self._mrcc_off()))
+    self.safety.safety_rx_hook(self._pedals(True))
+    self.assertTrue(self.safety.safety_tx_hook(self._mrcc_off()))
+    self.safety.safety_rx_hook(self._crz_ctrl(False))
+    self.assertTrue(self.safety.safety_tx_hook(self._mrcc_off()))
+    self.safety.safety_rx_hook(self._pedals(False))
+    self.assertFalse(self.safety.safety_tx_hook(self._mrcc_off()))
+
+  def test_armed_tracks_pedals_after_teardown(self):
+    self._init(tja_button=True, param=MazdaSafetyFlags.LONG | MazdaSafetyFlags.STEER_TO_ZERO_EPS)
+    self.safety.safety_rx_hook(self._pedals(True))
+    self.assertTrue(self.safety.safety_tx_hook(self._mrcc_off()))
+    self.safety.safety_rx_hook(self._pedals(False))
+    self.assertFalse(self.safety.safety_tx_hook(self._mrcc_off()))
+
+  def test_lookalike_tap_is_blocked_everywhere(self):
+    self.safety.safety_rx_hook(self._pedals(True))
+    for over in ({"SET_P": 1}, {"RES": 1}, {"TJA_BUTTON": 1}, {"BIT2": 0}, {"CTR": 12}):
+      with self.subTest(over=over):
+        msg = self._mrcc_off(**over)
+        # only the CTR variation stays valid; anything else is a composite command
+        allowed = over == {"CTR": 12}
+        self.assertEqual(allowed, self.safety.safety_tx_hook(msg))
+
+  def test_cancel_still_allowed_while_not_controlling(self):
+    self.safety.safety_rx_hook(self._crz_ctrl(False))
+    msg = self.packer.make_can_msg_safety("CRZ_BTNS", 0, {"CAN_OFF": 1})
+    self.assertTrue(self.safety.safety_tx_hook(msg))
+
+  def test_tja_bit_still_blocked_on_the_main_bus(self):
+    self.safety.safety_rx_hook(self._crz_ctrl(True))
+    msg = self.packer.make_can_msg_safety("CRZ_BTNS", 0, {"TJA_BUTTON": 1})
+    self.assertFalse(self.safety.safety_tx_hook(msg))
 
 
 if __name__ == "__main__":

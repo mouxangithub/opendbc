@@ -40,10 +40,9 @@ class CarControllerParams:
   FSC_SETTLE_T = 7.0           # observed-settled time before the teardown may start (check passed from 5.8 s)
   # This alive window detects a normal CRZ_INFO gap but does not establish ownership.
   STOCK_RADAR_ALIVE_T = 0.05
-  # Complete this ownership guard after panda's matching radar-silence guard.
-  PANDA_RADAR_SILENT_T = 1.0            # mazda.h MAZDA_RADAR_SILENT_FRAMES / 50 Hz PEDALS
-  STOCK_RADAR_GUARD_MARGIN_T = 0.2
-  STOCK_RADAR_GUARD_T = STOCK_RADAR_ALIVE_T + LONG_STEP * DT_CTRL + PANDA_RADAR_SILENT_T + STOCK_RADAR_GUARD_MARGIN_T  # 1.27 s
+  # Sustained radar silence before ownership is trusted (cruise; the main switch is not gated):
+  # about 12x the longest stock CRZ_INFO gap observed, the value every engaged drive ran on.
+  STOCK_RADAR_GUARD_T = 1.27
   RADAR_SESSION_LIMIT_T = 10.0  # per-attempt UDS budget
   # CAM_LANEINFO runs near 2 Hz, so its freshness window must exceed one period.
   CAM_LANEINFO_PERIOD_T = 0.563
@@ -58,12 +57,16 @@ class CarControllerParams:
   # Stock body-latched releases use a nine-frame RESUME_UNLATCHING pulse.
   RESUME_UNLATCH_LATCHED_T = 0.18  # s, 9 wire frames, the latched-family mode
   # Retry one unanswered body-latched release, then return control to the plan.
-  RESUME_REPULSE_T = 1.0  # s after a latched release, GEAR.BRAKE_HOLD still set
+  RESUME_REPULSE_T = 1.0  # s after a latched release, the body still holding
 
   MAIN_OFF_DEBOUNCE_T = 0.1   # both PEDALS cruise bits low this long is a main-off; no transient dropout in 4026 segments
+  CANCEL_SETTLE_T = 0.2       # s a cancel request must hold before the first press; the car answers its own inside it
 
   # Debounce movement requests before releasing a standstill hold.
   RELEASE_DEBOUNCE_T = 0.2
+  # A plan must ask for more than this to open a hold: the e2e model drifts up to +0.19 at a stop
+  # before its shouldStop lands, and every logged drive-off passes 0.25 within 1.1 s.
+  RELEASE_ACCEL = 0.25  # m/s^2
 
   # Debounce lead visibility before advertising a radar track.
   LEAD_DEBOUNCE_T = 0.5
@@ -114,21 +117,10 @@ class CarControllerParams:
       self.STEER_DRIVER_SAMPLES = 10
       self.STEER_DRIVER_MARGIN = 2
 
-      # A panda rejection resets its rate-limit reference to zero, so every later frame more
-      # than one step from zero is rejected too and the EPS stops receiving 0x243. About 0.6 s
-      # into that silence the EPS raises STEER_RATE.LKAS_FAULT and the camera faults 5.3 s
-      # later; neither clears before the next ignition cycle. The EPS echoes the last request
-      # it received in STEER_RATE.LKAS_REQUEST, so an echo that matches none of the recent
-      # commands means they are being rejected, and the ramp restarts from zero, which the
-      # panda accepts. See docs/zoompilot/mazda-lateral.md, "LKAS_FAULT".
-      self.STEER_ECHO_HISTORY = 4            # commands the 83 Hz echo may lag behind
-      self.STEER_ECHO_MISMATCH_FRAMES = 5    # 50 ms without a matching echo restarts the ramp
-
-      # STEER_MAX scales normalized torque into counts; EPS_CEILING_LOOKUP is the applied limit.
-      # Legacy firmware never commands below its 45 kph floor, so the low-speed scale is moot
-      # there and the rest of the schedule is the same hardware.
-      self.STEER_MAX = 1200        # theoretical max_steer 2047
-      self.STEER_MAX_LOOKUP = ([0., 14.2, 14.5], [1200, 1200, 800])
+      # STEER_MAX scales normalized torque into counts at every speed; EPS_CEILING_LOOKUP is the
+      # applied limit. The EPS is linear in counts, so one scale keeps the learned torque
+      # parameters in one unit (docs/zoompilot/lateral-tune.md).
+      self.STEER_MAX = self.EPS_STEER_MAX
       # Clamp to the measured applied-torque ceiling so controlsd can detect saturation.
       self.EPS_CEILING_LOOKUP = ([8.0, 8.5, 9.4, 10.3, 11.2, 12.1, 13.0, 13.9, 14.5],
                                  [1148, 1132, 1092, 1048, 1012,  920,  808,  676,  620])
@@ -145,11 +137,14 @@ class CarControllerParams:
         self.STEER_UNDELIVERED_ALERT_MIN_SPEED = 12. * CV.MPH_TO_MS
         # A block that began below this speed is the EPS's standby from a stop, whatever
         # LKAS_TRACK_STATE says later in it; only a block that began rolling can be a dropout.
+        # The same boundary gates the first-engagement hold in carstate: on the EPS's first
+        # engagement of the cycle it delivered nothing under standby below it on any start on
+        # record, and faulted on 3 of 13 (docs/zoompilot/mazda-lkas-startup-2026-09-09.md).
         self.STEER_UNDELIVERED_ALERT_ORIGIN_SPEED = 1.0  # m/s
     else:
       # Upstream's envelope. The interface no longer selects it for any Mazda; the panda keeps
       # it as the no-param default, so flags == 0 must still build.
-      self.STEER_MAX = 800         # theoretical max_steer 2047
+      self.STEER_MAX = self.TUNE_STEER_MAX
       self.STEER_DELTA_UP = 10
       self.STEER_DELTA_DOWN = 25
       self.STEER_DRIVER_MULTIPLIER = 1    # upstream stock
@@ -184,6 +179,13 @@ class MazdaFlags(IntFlag):
   # Everything keyed on the measured hardware rather than on what the firmware permits.
   EPS_HW = STEER_TO_ZERO_EPS | LEGACY_FW_EPS
 
+  # The G46L radar's dialect bit; see G46L_RADAR_FW below.
+  G46L_RADAR = 8
+  # The radar may be taken over while the car is moving: the developer's MazdaMovingTakeover
+  # param (opendbc/sunnypilot/car/interfaces.py), until a moving handover is on record for a
+  # radar firmware and this can become a fingerprint rule.
+  MOVING_TAKEOVER = 16
+
 
 class MazdaSafetyFlags(IntFlag):
   LONG = 1
@@ -195,7 +197,8 @@ class MazdaSafetyFlags(IntFlag):
 
 class WMI(StrEnum):
   JAPAN_PASSENGER = "JM1"   # Japan-built passenger cars
-  JAPAN_CROSSOVER = "JM3"   # Japan-built crossovers
+  JAPAN_CROSSOVER = "JM3"   # Japan-built crossovers, North America
+  EXPORT_CROSSOVER = "JM7"  # Japan-built crossovers, export markets; same chassis and year fields
   MEXICO_PASSENGER = "3MZ"  # Mazda de Mexico (Mazda 3)
   # Export VINs without a model-year field use the EPS-swap fallback.
   OCEANIA_EXPORT = "JM0"
@@ -211,17 +214,24 @@ class MazdaPlatformConfig(PlatformConfig):
 
 
 class CAR(Platforms):
+  MAZDA_CX5_KE = MazdaPlatformConfig(
+    [MazdaCarDocs("Mazda CX-5 2012-16")],
+    MazdaCarSpecs(mass=3433 * CV.LB_TO_KG, wheelbase=2.7, steerRatio=18.1),  # steer ratio from the 2022 CX-5: same rack hardware
+    # This radar does not publish 0x361-0x366 tracks on bus 0.
+    dbc_dict={Bus.pt: 'mazda_2017'},
+    wmis={WMI.JAPAN_CROSSOVER, WMI.EXPORT_CROSSOVER}, chassis_codes={'KE'}, years={'C', 'D', 'E', 'F', 'G'},  # 2012-16
+  )
   MAZDA_CX5 = MazdaPlatformConfig(
     [MazdaCarDocs("Mazda CX-5 2017-21")],
-    MazdaCarSpecs(mass=3655 * CV.LB_TO_KG, wheelbase=2.7, steerRatio=15.5),
-    wmis={WMI.JAPAN_CROSSOVER}, chassis_codes={'KF'}, years={'H', 'J', 'K', 'L', 'M'},  # 2017-21
+    MazdaCarSpecs(mass=3655 * CV.LB_TO_KG, wheelbase=2.7, steerRatio=18.1),  # steer ratio from the 2022 CX-5: same rack hardware
+    wmis={WMI.JAPAN_CROSSOVER, WMI.EXPORT_CROSSOVER}, chassis_codes={'KF'}, years={'H', 'J', 'K', 'L', 'M'},  # 2017-21
   )
   MAZDA_CX9 = MazdaPlatformConfig(
     [MazdaCarDocs("Mazda CX-9 2016-20")],
     MazdaCarSpecs(mass=4217 * CV.LB_TO_KG, wheelbase=2.93, steerRatio=17.6),
     # This radar does not publish 0x361-0x366 tracks on bus 0.
     dbc_dict={Bus.pt: 'mazda_2017'},
-    wmis={WMI.JAPAN_CROSSOVER}, chassis_codes={'TC'}, years={'G', 'H', 'J', 'K', 'L'},  # 2016-20
+    wmis={WMI.JAPAN_CROSSOVER, WMI.EXPORT_CROSSOVER}, chassis_codes={'TC'}, years={'G', 'H', 'J', 'K', 'L'},  # 2016-20
   )
   MAZDA_3 = MazdaPlatformConfig(
     [MazdaCarDocs("Mazda 3 2017-18")],
@@ -236,12 +246,20 @@ class CAR(Platforms):
   MAZDA_CX9_2021 = MazdaPlatformConfig(
     [MazdaCarDocs("Mazda CX-9 2021-23", video="https://youtu.be/dA3duO4a0O4")],
     MazdaCarSpecs(mass=4409 * CV.LB_TO_KG, wheelbase=2.93, steerRatio=17.6),
-    wmis={WMI.JAPAN_CROSSOVER}, chassis_codes={'TC'}, years={'M', 'N', 'P'},  # 2021-23
+    # 2021-23 in North America; export markets kept the TC through 2025 (a JM7 TC S VIN attested)
+    wmis={WMI.JAPAN_CROSSOVER, WMI.EXPORT_CROSSOVER}, chassis_codes={'TC'}, years={'M', 'N', 'P', 'S'},
   )
   MAZDA_CX5_2022 = MazdaPlatformConfig(
     [MazdaCarDocs("Mazda CX-5 2022-25")],
     MazdaCX5_2022CarSpecs(mass=3728 * CV.LB_TO_KG, wheelbase=2.698, steerRatio=18.1),  # 15.5 is factory spec; 18.1 from paramsd learner (2.9M samples)
-    wmis={WMI.JAPAN_CROSSOVER}, chassis_codes={'KF'}, years={'N', 'P', 'R', 'S'},  # 2022-25
+    wmis={WMI.JAPAN_CROSSOVER, WMI.EXPORT_CROSSOVER}, chassis_codes={'KF'}, years={'N', 'P', 'R', 'S'},  # 2022-25
+  )
+  MAZDA_CX8_2023 = MazdaPlatformConfig(
+    [MazdaCarDocs("Mazda CX-8 2023")],
+    # Three-row CX-5 derivative on the CX-9 wheelbase (chassis KG), sold in Japan and Australia; the CX-9
+    # specs stand in until a learned set exists. Japan-market cars carry a chassis number, not a VIN,
+    # and Australian JM0 VINs have no model-year field, so it fingerprints by firmware alone.
+    MAZDA_CX9_2021.specs,
   )
 
 
@@ -251,10 +269,29 @@ class LKAS_LIMITS:
   ENABLE_SPEED = 52     # kph
 
 
-# Keep steer-to-zero firmware synchronized with the CX-5 2022 EPS entries in fingerprints.py.
+# Torque tunes for a platform whose params.toml entry is borrowed, on params.toml's scale:
+# (latAccelFactor, friction). The CX-5 2022 substitutes the CX-9 2021's 1.76; its own global
+# learner reads 1.222 (2026-09-29, docs/zoompilot/lateral-tune.md).
+TORQUE_TUNES = {
+  CAR.MAZDA_CX5_2022: (1.222, 0.154),
+}
+
+
+# Keep steer-to-zero firmware synchronized with the STEER_TO_ZERO_PLATFORMS EPS entries in fingerprints.py.
 STEER_TO_ZERO_EPS_FW = {
+  b'K0A1-3210X-A-00\x00\x00\x00\x00\x00\x00\x00\x00\x00',  # CX-8 2023 (Japan)
   b'KBST-3210X-A-00\x00\x00\x00\x00\x00\x00\x00\x00\x00',
   b'KSD5-3210X-C-00\x00\x00\x00\x00\x00\x00\x00\x00\x00',
+}
+
+# Platforms that ship the steer-to-zero EPS from the factory: what an unread EPS falls back to.
+STEER_TO_ZERO_PLATFORMS = frozenset({CAR.MAZDA_CX5_2022, CAR.MAZDA_CX8_2023})
+
+# The 2016.5-era radar kept by an EPS-swapped older body. Listed for fingerprinting, but
+# it never publishes 0x361-0x366 on bus 0; its one frame is fully static — no counter, no
+# checksum. Stored unpadded; matched with nulls stripped so UDS padding cannot break it.
+G46L_RADAR_FW = {
+  b'G46L-67XA1-C',
 }
 
 
@@ -264,29 +301,38 @@ class Buttons:
   SET_MINUS = 2
   RESUME = 3
   CANCEL = 4
+  # The physical TJA button, sent only on the camera bus to switch the camera's own TJA/CTS off.
+  TJA = 5
 
 
-def match_fw_to_car_fuzzy(live_fw_versions, vin, offline_fw_versions) -> set[str]:
-  # After firmware matching fails, require VIN fields to identify one chassis platform.
+def platform_from_vin(vin: str) -> str | None:
+  """The one platform the VIN's fields identify, or None when the VIN is unknown to
+  every platform or ambiguous.
+
+  Shared by the fuzzy firmware fallback and the selected-car/VIN mismatch warning.
+  """
   if not is_valid_vin(vin):
-    return set()
+    return None
 
   vin_obj = Vin(vin)
   chassis_code = vin_obj.vds[0:2]
   year = vin_obj.vis[0]
 
-  candidates = set()
-  for platform in CAR:
-    platform_config = platform.config
-    if vin_obj.wmi in platform_config.wmis and chassis_code in platform_config.chassis_codes and year in platform_config.years:
-      candidates.add(platform)
+  candidates = {platform for platform in CAR
+                if vin_obj.wmi in platform.config.wmis and chassis_code in platform.config.chassis_codes
+                and year in platform.config.years}
+  return str(next(iter(candidates))) if len(candidates) == 1 else None
 
-  if len(candidates) == 1:
-    carlog.error(f"Fingerprinted {next(iter(candidates))} by VIN")
-    return {str(c) for c in candidates}
+
+def match_fw_to_car_fuzzy(live_fw_versions, vin, offline_fw_versions) -> set[str]:
+  # After firmware matching fails, require VIN fields to identify one chassis platform.
+  platform = platform_from_vin(vin)
+  if platform is not None:
+    carlog.error(f"Fingerprinted {platform} by VIN")
+    return {platform}
 
   # Only export VINs without model-year data continue to the EPS-swap fallback.
-  if vin_obj.wmi != WMI.OCEANIA_EXPORT:
+  if not is_valid_vin(vin) or Vin(vin).wmi != WMI.OCEANIA_EXPORT:
     return set()
 
   # Export-car swaps require a recognized EPS and an engine that identifies one platform.

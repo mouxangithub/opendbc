@@ -15,10 +15,12 @@ from opendbc.car import structs
 from opendbc.car.can_definitions import CanRecvCallable, CanSendCallable
 from opendbc.car.hyundai.values import HyundaiFlags
 from opendbc.car.subaru.values import SubaruFlags
+from opendbc.car.mazda.values import MazdaFlags
 from opendbc.car.toyota.values import RADAR_ACC_CAR, SECOC_CAR, TSS2_CAR, ToyotaSafetyFlags
 from opendbc.sunnypilot.car.hyundai.enable_radar_tracks import enable_radar_tracks as hyundai_enable_radar_tracks
 from opendbc.sunnypilot.car.hyundai.longitudinal.helpers import LongitudinalTuningType
 from opendbc.sunnypilot.car.hyundai.values import HyundaiFlagsSP
+from opendbc.sunnypilot.car.mazda.values import MazdaFlagsSP, MazdaSafetyFlagsSP
 from opendbc.sunnypilot.car.subaru.values_ext import SubaruFlagsSP, SubaruSafetyFlagsSP
 from opendbc.sunnypilot.car.tesla.values import MadsScreenButtonType, TeslaFlagsSP, TeslaSafetyFlagsSP
 from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP
@@ -91,6 +93,7 @@ def setup_interfaces(CI, CP: structs.CarParams, CP_SP: structs.CarParamsSP,
   _initialize_radar_tracks(CP, CP_SP, can_recv, can_send)
   _initialize_stop_and_go(CP, CP_SP, params_dict)
   _initialize_toyota(CP, CP_SP, params_dict)
+  _initialize_mazda(CP, CP_SP, params_dict)
 
 
 def _initialize_custom_longitudinal_tuning(CI, CP: structs.CarParams, CP_SP: structs.CarParamsSP,
@@ -287,3 +290,17 @@ def _initialize_toyota(CP: structs.CarParams, CP_SP: structs.CarParamsSP, params
 
     if toyota_brake_onset:
       CP_SP.flags |= ToyotaFlagsSP.SP_BRAKE_ONSET.value
+
+
+def _initialize_mazda(CP: structs.CarParams, CP_SP: structs.CarParamsSP, params_dict: dict[str, str]) -> None:
+  if CP.brand == 'mazda':
+    # The TJA button is fitted to some trims only and the fingerprint cannot tell, so the
+    # driver declares it. With it, the button owns lateral and MRCC only controls cruise.
+    if int(params_dict.get("MazdaTjaButton", 0)) == 1:
+      CP_SP.flags |= MazdaFlagsSP.TJA_BUTTON.value
+      CP_SP.safetyParam |= MazdaSafetyFlagsSP.TJA_BUTTON
+    # A developer's declaration, off by default: the radar takeover may be requested while the
+    # car is moving (a fresh session after a forced-offroad exit or a process restart). No
+    # radar has a moving handover on record yet; when one does, this becomes a firmware rule.
+    if CP.openpilotLongitudinalControl and int(params_dict.get("MazdaMovingTakeover", 0)) == 1:
+      CP.flags |= MazdaFlags.MOVING_TAKEOVER.value

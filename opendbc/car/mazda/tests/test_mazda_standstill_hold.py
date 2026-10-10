@@ -10,13 +10,13 @@ debounce, the RESUME_UNLATCHING pulse and its one retry.
 import pytest
 
 from opendbc.car import DT_CTRL
-from opendbc.car.mazda.longitudinal import (RELEASE_DEBOUNCE_FRAMES, RESUME_REPULSE_FRAMES, RESUME_UNLATCH_LATCHED_FRAMES,
+from opendbc.car.mazda.longitudinal import (RELEASE_ACCEL, RELEASE_DEBOUNCE_FRAMES, RESUME_REPULSE_FRAMES, RESUME_UNLATCH_LATCHED_FRAMES,
                                             StandstillHold)
 
 
 def drive(sm, frames, **kwargs):
   defaults = dict(long_engaged=True, stopping=False, standstill=False, plan_accel=-1.024,
-                  brake_hold=False, gas_pressed=False)
+                  body_hold=False, gas_pressed=False)
   defaults.update(kwargs)
   for _ in range(frames):
     sm.update(**defaults)
@@ -26,8 +26,8 @@ def drive(sm, frames, **kwargs):
 def latched_release(sm):
   # a body-latched hold released by the plan: the first pulse fires with the release
   drive(sm, 1, stopping=True)
-  drive(sm, 100, stopping=True, standstill=True, brake_hold=True)
-  drive(sm, RELEASE_DEBOUNCE_FRAMES, standstill=True, brake_hold=True, plan_accel=0.5)
+  drive(sm, 100, stopping=True, standstill=True, body_hold=True)
+  drive(sm, RELEASE_DEBOUNCE_FRAMES, standstill=True, body_hold=True, plan_accel=0.5)
   assert sm.latched_release and sm.resume_unlatching
 
 
@@ -57,24 +57,24 @@ def test_relax_follows_the_car_taking_the_hold():
   drive(sm, 1, stopping=True)
   drive(sm, 10, stopping=True, standstill=True)
   assert not sm.car_has_hold
-  drive(sm, 1, stopping=True, standstill=True, brake_hold=True)
+  drive(sm, 1, stopping=True, standstill=True, body_hold=True)
   # stop bits and ACC_ACTIVE_2 drop with the command, together, exactly as stock does
   assert sm.car_has_hold and not sm.stop_bits and not sm.acc_active_2
   # and it is not a latch: if the car lets go, we brake again
-  drive(sm, 1, stopping=True, standstill=True, brake_hold=False)
+  drive(sm, 1, stopping=True, standstill=True, body_hold=False)
   assert not sm.car_has_hold and sm.stop_bits and sm.acc_active_2
 
 
 def test_released_when_the_plan_asks_to_move():
   sm = StandstillHold()
   drive(sm, 1, stopping=True)
-  drive(sm, 500, stopping=True, standstill=True, brake_hold=True)
+  drive(sm, 500, stopping=True, standstill=True, body_hold=True)
   assert sm.holding
   # the release is debounced: a plan asking to move for less than the window changes nothing
-  # (the body keeps its own latch until the pulse plays, so brake_hold stays up here)
-  drive(sm, RELEASE_DEBOUNCE_FRAMES - 1, standstill=True, brake_hold=True, plan_accel=0.1)
+  # (the body keeps its own latch until the pulse plays, so body_hold stays up here)
+  drive(sm, RELEASE_DEBOUNCE_FRAMES - 1, standstill=True, body_hold=True, plan_accel=0.5)
   assert sm.holding and not sm.resume_unlatching
-  drive(sm, 1, standstill=True, brake_hold=True, plan_accel=0.1)
+  drive(sm, 1, standstill=True, body_hold=True, plan_accel=0.5)
   assert not sm.holding and not sm.car_has_hold
   # the body owned the brakes, so this is the latched family: the pulse fires with the
   # release. The body answers nothing else -- deferring behind silence (route 0000011d)
@@ -95,14 +95,48 @@ def test_hold_comes_back_if_the_plan_changes_its_mind():
   sm = StandstillHold()
   drive(sm, 1, stopping=True)
   drive(sm, 100, stopping=True, standstill=True)
-  drive(sm, RELEASE_DEBOUNCE_FRAMES, standstill=True, plan_accel=0.2)
+  drive(sm, RELEASE_DEBOUNCE_FRAMES, standstill=True, plan_accel=0.5)
   assert not sm.holding
   # nothing was latched, so this release emits no unlatch bit at all, deferred or otherwise
   assert sm.unlatch_frames == 0 and not sm.resume_unlatching
+  # a launch that eases below the opening threshold does not flap back into a hold
+  drive(sm, int(2.0 / DT_CTRL), standstill=True, plan_accel=0.1)
+  assert not sm.holding
   drive(sm, 1, stopping=True, standstill=True, plan_accel=-1.0)
   assert sm.holding
   assert not sm.resume_unlatching and sm.unlatch_frames == 0
   assert sm.stop_bits
+  # re-held, it needs a real request again
+  drive(sm, int(2.0 / DT_CTRL), standstill=True, plan_accel=0.1)
+  assert sm.holding
+
+
+@pytest.mark.parametrize("body_hold", [False, True])
+def test_sub_threshold_plan_never_opens_the_hold(body_hold):
+  sm = StandstillHold()
+  # the e2e model drifts positive at a stop before its own shouldStop lands; however long it
+  # lasts, it is not a request to move
+  drive(sm, 1, stopping=True)
+  drive(sm, 100, stopping=True, standstill=True, body_hold=body_hold)
+  drive(sm, int(3.0 / DT_CTRL), standstill=True, body_hold=body_hold,
+        plan_accel=RELEASE_ACCEL - 0.01)
+  assert sm.holding and not sm.just_released and not sm.resume_unlatching
+  assert sm.stop_bits != body_hold
+
+
+def test_route_27b_arrival_blip_keeps_the_hold():
+  sm = StandstillHold()
+  # route 0000027b seg 9: a no-lead e2e stop arrives in pid, the plan drifts +0.01..+0.10 for
+  # 0.3 s, then shouldStop lands and the stopping ramp takes over. The old > 0 rule released
+  # here, the body went to HOLD_STATE 5 and the car crept into the junction
+  drive(sm, 1, standstill=True, plan_accel=-0.02)
+  assert sm.holding
+  for i in range(30):
+    drive(sm, 1, standstill=True, plan_accel=0.01 + 0.003 * i)
+    assert sm.holding and sm.stop_bits and not sm.just_released
+  for i in range(100):
+    drive(sm, 1, stopping=True, standstill=True, plan_accel=-0.01 * i)
+    assert sm.holding and sm.stop_bits
 
 
 def test_never_latched_release_emits_no_pulse():
@@ -114,9 +148,9 @@ def test_never_latched_release_emits_no_pulse():
   drive(sm, 1, stopping=True)
   drive(sm, 100, stopping=True, standstill=True)
   assert not sm.resume_unlatching
-  drive(sm, RELEASE_DEBOUNCE_FRAMES, standstill=True, plan_accel=0.1)
+  drive(sm, RELEASE_DEBOUNCE_FRAMES, standstill=True, plan_accel=0.5)
   assert not sm.holding and not sm.latched_release
-  drive(sm, int(1.0 / DT_CTRL), standstill=True, plan_accel=0.1)
+  drive(sm, int(1.0 / DT_CTRL), standstill=True, plan_accel=0.5)
   assert not sm.resume_unlatching and sm.unlatch_frames == 0
 
 
@@ -125,19 +159,19 @@ def test_latched_release_pulses_immediately_and_runs_its_length():
   # the pulse is the release protocol: the body ignores everything else (routes 0000011d
   # and 0000012c), so waiting only delays the resume. One pulse, stock's latched length.
   drive(sm, 1, stopping=True)
-  drive(sm, 100, stopping=True, standstill=True, brake_hold=True)
-  drive(sm, RELEASE_DEBOUNCE_FRAMES - 1, standstill=True, brake_hold=True, plan_accel=0.1)
+  drive(sm, 100, stopping=True, standstill=True, body_hold=True)
+  drive(sm, RELEASE_DEBOUNCE_FRAMES - 1, standstill=True, body_hold=True, plan_accel=0.5)
   assert not sm.resume_unlatching
-  drive(sm, 1, standstill=True, brake_hold=True, plan_accel=0.1)
+  drive(sm, 1, standstill=True, body_hold=True, plan_accel=0.5)
   assert sm.resume_unlatching, "the pulse must fire with the release"
-  drive(sm, RESUME_UNLATCH_LATCHED_FRAMES, standstill=True, brake_hold=True, plan_accel=0.1)
+  drive(sm, RESUME_UNLATCH_LATCHED_FRAMES, standstill=True, body_hold=True, plan_accel=0.5)
   assert not sm.resume_unlatching, "pulse outran its length"
 
 
 def test_long_disengage_resets():
   sm = StandstillHold()
   drive(sm, 1, stopping=True)
-  drive(sm, 100, stopping=True, standstill=True, brake_hold=True)
+  drive(sm, 100, stopping=True, standstill=True, body_hold=True)
   drive(sm, 1, long_engaged=False)
   assert not sm.holding and not sm.car_has_hold and not sm.stop_bits
 
@@ -191,32 +225,32 @@ def test_plan_flap_below_the_debounce_never_releases():
   for i in range(600):
     accel = 0.3 if (i // 10) % 2 == 0 else -1.0  # 0.1 s swings, below the 0.2 s debounce
     sm.update(long_engaged=True, stopping=accel < 0, standstill=True, plan_accel=accel,
-              brake_hold=False, gas_pressed=False)
+              body_hold=False, gas_pressed=False)
     assert not (sm.stop_bits and sm.resume_unlatching), "stop bits and pulse on one frame"
     assert not sm.resume_unlatching, "a sub-debounce flap fired a release pulse"
   assert sm.holding
 
 
-@pytest.mark.parametrize("brake_hold", [False, True])
-def test_slow_flap_never_mixes_stop_bits_with_the_pulse(brake_hold):
+@pytest.mark.parametrize("body_hold", [False, True])
+def test_slow_flap_never_mixes_stop_bits_with_the_pulse(body_hold):
   sm = StandstillHold()
-  # swings long enough to release each time. Nothing latched (brake_hold False) must never
+  # swings long enough to release each time. Nothing latched (body_hold False) must never
   # put an unlatch bit on the wire; a body that holds on through every swing falls back to
   # at most one pulse per release, and a re-hold mid-pulse waits it out before re-asserting
   # the stop bits
   drive(sm, 1, stopping=True)
-  drive(sm, 100, stopping=True, standstill=True, brake_hold=brake_hold)
+  drive(sm, 100, stopping=True, standstill=True, body_hold=body_hold)
   pulses = 0
   prev_unlatch = False
   swing = RELEASE_DEBOUNCE_FRAMES + 30  # long enough for the release and its pulse to play
   for i in range(1200):
     accel = 0.3 if (i // swing) % 2 == 0 else -1.0
     sm.update(long_engaged=True, stopping=accel < 0, standstill=True, plan_accel=accel,
-              brake_hold=brake_hold, gas_pressed=False)
+              body_hold=body_hold, gas_pressed=False)
     assert not (sm.stop_bits and sm.resume_unlatching), "stop bits and pulse on one frame"
     pulses += int(sm.resume_unlatching and not prev_unlatch)
     prev_unlatch = sm.resume_unlatching
-  if brake_hold:
+  if body_hold:
     assert pulses > 0
     assert pulses <= 1 + 1200 // (2 * swing), "more pulses than releases"
   else:
@@ -231,8 +265,8 @@ def test_latched_pulse_runs_to_completion_through_a_re_hold():
   # the release debounce is at least as long as any pulse window
   assert RELEASE_DEBOUNCE_FRAMES >= RESUME_UNLATCH_LATCHED_FRAMES
   drive(sm, 1, stopping=True)
-  drive(sm, 100, stopping=True, standstill=True, brake_hold=True)
-  drive(sm, RELEASE_DEBOUNCE_FRAMES, standstill=True, brake_hold=True, plan_accel=0.3)
+  drive(sm, 100, stopping=True, standstill=True, body_hold=True)
+  drive(sm, RELEASE_DEBOUNCE_FRAMES, standstill=True, body_hold=True, plan_accel=0.3)
   assert sm.latched_release and sm.resume_unlatching  # the pulse fires with the release
   drive(sm, 3, standstill=True, plan_accel=0.3)
   drive(sm, 1, stopping=True, standstill=True)  # re-hold mid-pulse, body already let go
@@ -245,13 +279,13 @@ def test_latched_pulse_runs_to_completion_through_a_re_hold():
 def test_missed_pulse_is_retried_exactly_once():
   sm = StandstillHold()
   latched_release(sm)
-  # the body ignores the pulse: GEAR.BRAKE_HOLD stays set, plan still positive, car still
+  # the body ignores the pulse and keeps holding, plan still positive, car still
   pulses = [0]
 
   def run(frames):
     prev = sm.resume_unlatching
     for _ in range(frames):
-      sm.update(long_engaged=True, stopping=False, standstill=True, plan_accel=0.5, brake_hold=True, gas_pressed=False)
+      sm.update(long_engaged=True, stopping=False, standstill=True, plan_accel=0.5, body_hold=True, gas_pressed=False)
       pulses[0] += sm.resume_unlatching and not prev
       prev = sm.resume_unlatching
   run(RESUME_REPULSE_FRAMES - 2)
@@ -271,8 +305,8 @@ def test_answered_pulse_is_not_retried():
   sm = StandstillHold()
   latched_release(sm)
   # the body lets go 2-3 wire frames in, as in every capture; the retry window never fills
-  drive(sm, 4, standstill=True, brake_hold=True, plan_accel=0.5)
-  drive(sm, 2 * RESUME_REPULSE_FRAMES, standstill=True, brake_hold=False, plan_accel=0.5)
+  drive(sm, 4, standstill=True, body_hold=True, plan_accel=0.5)
+  drive(sm, 2 * RESUME_REPULSE_FRAMES, standstill=True, body_hold=False, plan_accel=0.5)
   assert not (sm.resume_unlatching and sm.repulsed)
   assert not sm.repulsed
 
@@ -280,9 +314,9 @@ def test_answered_pulse_is_not_retried():
 def test_retry_window_needs_an_unbroken_run_of_the_body_holding():
   sm = StandstillHold()
   latched_release(sm)
-  drive(sm, RESUME_REPULSE_FRAMES - 5, standstill=True, brake_hold=True, plan_accel=0.5)
-  drive(sm, 1, standstill=True, brake_hold=False, plan_accel=0.5)  # the body did let go
-  drive(sm, 10, standstill=True, brake_hold=True, plan_accel=0.5)   # ...then latched again
+  drive(sm, RESUME_REPULSE_FRAMES - 5, standstill=True, body_hold=True, plan_accel=0.5)
+  drive(sm, 1, standstill=True, body_hold=False, plan_accel=0.5)  # the body did let go
+  drive(sm, 10, standstill=True, body_hold=True, plan_accel=0.5)   # ...then latched again
   assert not sm.repulsed, "a broken run must not count toward the retry"
 
 
@@ -291,8 +325,8 @@ def test_retry_window_needs_an_unbroken_run_of_the_body_holding():
 def test_no_retry_under_driver_gas_or_a_re_hold(override):
   sm = StandstillHold()
   latched_release(sm)
-  drive(sm, RESUME_UNLATCH_LATCHED_FRAMES + 1, standstill=True, brake_hold=True, plan_accel=0.5)
-  args = dict(standstill=True, brake_hold=True, plan_accel=0.5)
+  drive(sm, RESUME_UNLATCH_LATCHED_FRAMES + 1, standstill=True, body_hold=True, plan_accel=0.5)
+  args = dict(standstill=True, body_hold=True, plan_accel=0.5)
   args.update(override)
   drive(sm, 2 * RESUME_REPULSE_FRAMES, **args)
   assert not sm.repulsed

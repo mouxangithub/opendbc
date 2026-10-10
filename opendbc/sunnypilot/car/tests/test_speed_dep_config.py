@@ -10,15 +10,25 @@ from opendbc.car import gen_empty_fingerprint
 from opendbc.car.mazda.interface import CarInterface
 from opendbc.car.mazda.values import CAR, MazdaFlags
 from opendbc.car.structs import CarParams
-from opendbc.sunnypilot.car.interfaces import (get_speed_dep_config, get_speed_dep_config_for_car, get_steer_max_schedule,
-                                             get_steer_rail_schedule, get_steer_slew_schedule)
-
-CX5_2022_SCHEDULE = ([0.0, 14.2, 14.5], [1200.0, 1200.0, 800.0])
+from opendbc.sunnypilot.car.interfaces import (get_speed_dep_config, get_speed_dep_config_for_car, get_steer_rail_schedule,
+                                             get_steer_slew_schedule, get_tune_scale)
 
 
 def cx5_2022_cp() -> CarParams:
   # the real CarParams: the 2022 EPS flag and minSteerSpeed 0 come from the interface
   cp = CarInterface.get_params(CAR.MAZDA_CX5_2022, gen_empty_fingerprint(), [], alpha_long=False, is_release=False, docs=False)
+  assert cp.flags & MazdaFlags.STEER_TO_ZERO_EPS and cp.minSteerSpeed == 0.0
+  return cp
+
+
+def swapped_cp(platform=CAR.MAZDA_CX5_KE) -> CarParams:
+  # a chassis behind the 2022 CX-5 EPS the seed bins were learned under (the 2016.5 KE report)
+  fw = CarParams.CarFw()
+  fw.ecu = CarParams.Ecu.eps
+  fw.address = 0x730
+  fw.subAddress = 0
+  fw.fwVersion = b'KSD5-3210X-C-00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+  cp = CarInterface.get_params(platform, gen_empty_fingerprint(), [fw], alpha_long=False, is_release=False, docs=False)
   assert cp.flags & MazdaFlags.STEER_TO_ZERO_EPS and cp.minSteerSpeed == 0.0
   return cp
 
@@ -48,23 +58,13 @@ def legacy_fw_cp() -> CarParams:
   return cp
 
 
-class TestSteerMaxSchedule:
-  def test_mazda_steer_to_zero_returns_lookup(self):
-    assert get_steer_max_schedule(cx5_2022_cp()) == CX5_2022_SCHEDULE
-
-  @pytest.mark.parametrize("cp_kwargs", [
-    dict(brand="toyota", fingerprint="TOYOTA_RAV4_TSS2"),  # flat steer max
-    dict(brand="notabrand"),
-  ], ids=["flat_steer_max_brand", "unknown_brand"])
-  def test_brands_without_a_schedule_return_none(self, cp_kwargs):
-    assert get_steer_max_schedule(brand_cp(**cp_kwargs)) is None
-
-  def test_schedule_attached_to_active_entry(self):
-    cfg = get_speed_dep_config_for_car(cx5_2022_cp())
-    assert cfg['steer_max_schedule'] == CX5_2022_SCHEDULE
-    # the schedule's step must sit inside a bin span, or per-count interp cannot place it
-    assert cfg['speed_bp'][2] < 14.2
-    assert 14.5 < cfg['speed_bp'][3]
+class TestSpeedDepConfig:
+  def test_entries_are_consistent(self):
+    for name, entry in get_speed_dep_config().items():
+      if 'speed_bp' not in entry:
+        continue
+      assert entry['speed_bp'] == sorted(entry['speed_bp']), name
+      assert len(entry['laf_bp']) == len(entry['speed_bp']) == len(entry['friction_bp']), name
 
   def test_seed_version_is_a_non_negative_int(self):
     """Every entry's seed_version (0 when absent) is an int the cache field can carry."""
@@ -77,27 +77,40 @@ class TestSteerMaxSchedule:
     full = get_speed_dep_config()['MAZDA_CX9_2021']
     assert cfg['speed_bp'] == [v for v in full['speed_bp'] if v >= 20.0]
     assert len(cfg['laf_bp']) == len(cfg['speed_bp']) == len(cfg['friction_bp'])
-    assert 'steer_max_schedule' not in cfg
 
   def test_flagged_entry_stays_empty_behind_a_floor(self, monkeypatch):
     import opendbc.sunnypilot.car.interfaces as mod
     monkeypatch.setattr(mod, 'get_speed_dep_config', lambda: {'MAZDA_CX9_2021': {'requires_steer_to_zero': True, 'speed_bp': [30.0]}})
     assert get_speed_dep_config_for_car(brand_cp(**STOCK_MAZDA)) == {}
 
+  SWAP_CHASSIS = [CAR.MAZDA_CX5_KE, CAR.MAZDA_CX5, CAR.MAZDA_CX9, CAR.MAZDA_3, CAR.MAZDA_6]
+
+  @pytest.mark.parametrize("platform", SWAP_CHASSIS)
+  def test_swapped_chassis_take_the_donor_table(self, platform):
+    # the donor EPS is the one the CX-5 2022 bins were learned behind
+    cfg = get_speed_dep_config_for_car(swapped_cp(platform))
+    cx5_2022 = get_speed_dep_config_for_car(cx5_2022_cp())
+    for key in ('speed_bp', 'laf_bp', 'friction_bp', 'seed_version'):
+      assert cfg[key] == cx5_2022[key], key
+
+  @pytest.mark.parametrize("platform", SWAP_CHASSIS)
+  def test_swapped_chassis_entries_withheld_on_the_stock_eps(self, platform):
+    assert get_speed_dep_config_for_car(brand_cp(brand="mazda", fingerprint=str(platform), min_steer_speed=20.0)) == {}
+
   def test_config_copy_not_cached_dict(self):
     a = get_speed_dep_config_for_car(cx5_2022_cp())
-    a['steer_max_schedule'] = 'mutated'
-    assert get_speed_dep_config_for_car(cx5_2022_cp())['steer_max_schedule'] != 'mutated'
+    a['speed_bp'] = 'mutated'
+    assert get_speed_dep_config_for_car(cx5_2022_cp())['speed_bp'] != 'mutated'
 
 
 class TestSteerRailSchedule:
   def test_mazda_steer_to_zero_rail(self):
     bp, rail = get_steer_rail_schedule(cx5_2022_cp())
     assert all(0.0 < r <= 1.0 for r in rail)
-    # the rail bottoms out just below the cliff (648/1200) and recovers above it (620/800)
-    assert rail[bp.index(14.2)] == min(rail)
-    assert rail[bp.index(14.2)] == pytest.approx(0.54, abs=0.01)
-    assert rail[bp.index(14.5)] == pytest.approx(620.0 / 800.0, abs=1e-6)
+    # the ceiling over the one 1200-count scale: monotone, no cliff to interpolate across
+    assert rail == sorted(rail, reverse=True)
+    assert rail[0] == pytest.approx(1148.0 / 1200.0)
+    assert rail[-1] == pytest.approx(620.0 / 1200.0)
 
   @pytest.mark.parametrize("cp_kwargs", [
     dict(brand="mazda", min_steer_speed=20.0),  # stock EPS params have no ceiling lookup
@@ -108,12 +121,9 @@ class TestSteerRailSchedule:
 
 
 class TestSteerSlewSchedule:
-  def test_mazda_steer_to_zero_slew_steps_at_the_cliff(self):
-    bp, up, down = get_steer_slew_schedule(cx5_2022_cp())
-    assert bp == [0.0, 14.2, 14.5]
-    # 12 counts/frame both ways: 0.01 of scale below the cliff, 0.015 above
-    assert up == [12.0 / 1200.0, 12.0 / 1200.0, 12.0 / 800.0]
-    assert down == up
+  def test_mazda_steer_to_zero_slew(self):
+    # 12 counts/frame both ways over the flat 1200
+    assert get_steer_slew_schedule(cx5_2022_cp()) == ([0.0], [12.0 / 1200.0], [12.0 / 1200.0])
 
   def test_legacy_mazda_flat_scale(self):
     # stock EPS params: 10 up, 25 down over a flat 800
@@ -137,17 +147,37 @@ class TestLegacyFirmwareEntry:
     assert cfg['speed_bp'] == [full['speed_bp'][i] for i in keep]
     assert cfg['laf_bp'] == [full['laf_bp'][i] for i in keep]
     assert cfg['friction_bp'] == [full['friction_bp'][i] for i in keep]
-    # every surviving bin sits above the 1200 -> 800 step, so its seed was learned at the 800 scale
-    assert min(cfg['speed_bp']) > 14.5
+    # every surviving bin sits above the firmware's 45-52 kph dead band
+    assert min(cfg['speed_bp']) > 52 / 3.6
     assert cfg.get('seed_version', 0) == full.get('seed_version', 0)
 
-  def test_legacy_firmware_shares_the_schedule_rail_and_slew(self):
+  def test_first_kept_bin_keeps_its_lower_edge(self):
+    # without it the first kept bin would reach down to the default 5 m/s floor, over the
+    # floor and the dead band, where the EPS takes no torque
+    full = get_speed_dep_config()['MAZDA_CX5_2022']['speed_bp']
+    cfg = get_speed_dep_config_for_car(legacy_fw_cp())
+    i = full.index(cfg['speed_bp'][0])
+    assert cfg['min_speed'] == pytest.approx((full[i - 1] + full[i]) / 2)
+    assert 'min_speed' not in get_speed_dep_config_for_car(cx5_2022_cp())
+
+  def test_legacy_firmware_shares_the_rail_and_slew(self):
     cp, stz = legacy_fw_cp(), cx5_2022_cp()
-    assert get_steer_max_schedule(cp) == CX5_2022_SCHEDULE
-    assert get_speed_dep_config_for_car(cp)['steer_max_schedule'] == CX5_2022_SCHEDULE
     assert get_steer_rail_schedule(cp) == get_steer_rail_schedule(stz)
     assert get_steer_slew_schedule(cp) == get_steer_slew_schedule(stz)
 
   def test_steer_to_zero_entry_is_untouched(self):
     cfg = get_speed_dep_config_for_car(cx5_2022_cp())
     assert cfg['speed_bp'] == get_speed_dep_config()['MAZDA_CX5_2022']['speed_bp']
+
+
+class TestTuneScale:
+  @pytest.mark.parametrize("make_cp", [cx5_2022_cp, legacy_fw_cp, swapped_cp], ids=["cx5_2022", "legacy_fw", "eps_swap"])
+  def test_mazda_eps_hardware_is_one_and_a_half_upstreams_scale(self, make_cp):
+    assert get_tune_scale(make_cp()) == 1.5
+
+  @pytest.mark.parametrize("cp_kwargs", [
+    dict(brand="toyota", fingerprint="TOYOTA_RAV4_TSS2"),
+    dict(brand="notabrand"),
+  ], ids=["no_tune_scale_brand", "unknown_brand"])
+  def test_other_scales_are_one(self, cp_kwargs):
+    assert get_tune_scale(brand_cp(**cp_kwargs)) == 1.0

@@ -301,12 +301,13 @@
 |Lincoln|Aviator Plug-in Hybrid 2020-24|Co-Pilot360 Plus|[Upstream](#upstream)|
 |MAN|eTGE 2020-24|Adaptive Cruise Control (ACC) & Lane Assist|[Upstream](#upstream)|
 |MAN|TGE 2017-24|Adaptive Cruise Control (ACC) & Lane Assist|[Upstream](#upstream)|
-|Mazda|3 2017-18|All|[Dashcam mode](#dashcam)|
-|Mazda|3 2019-24|All|[Upstream](#upstream)|
-|Mazda|6 2017-20|All|[Dashcam mode](#dashcam)|
-|Mazda|CX-5 2017-21|All|[Dashcam mode](#dashcam)|
+|Mazda|3 2017-18|All|[Upstream](#upstream)|
+|Mazda|6 2017-20|All|[Upstream](#upstream)|
+|Mazda|CX-5 2012-16|All|[Upstream](#upstream)|
+|Mazda|CX-5 2017-21|All|[Upstream](#upstream)|
 |Mazda|CX-5 2022-25|All|[Upstream](#upstream)|
-|Mazda|CX-9 2016-20|All|[Dashcam mode](#dashcam)|
+|Mazda|CX-8 2023|All|[Upstream](#upstream)|
+|Mazda|CX-9 2016-20|All|[Upstream](#upstream)|
 |Mazda|CX-9 2021-23|All|[Upstream](#upstream)|
 |MG|5 EV 2021|All|[Dashcam mode](#dashcam)|
 |Nissan|Altima 2019-24|ProPILOT Assist|[Upstream](#upstream)|

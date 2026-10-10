@@ -60,14 +60,14 @@ def _approach(i, _):
 
 
 def _body_answers_pulse(i, cc):
-  # the body drops GEAR.BRAKE_HOLD two wire frames into the pulse, as in every capture
+  # the body lets go two wire frames into the pulse, as in every capture
   sm = cc.stop_and_go
   if not hasattr(cc, "_golden_pulse_start"):
     cc._golden_pulse_start = None
   if sm.resume_unlatching and cc._golden_pulse_start is None:
     cc._golden_pulse_start = i
   held = cc._golden_pulse_start is None or i < cc._golden_pulse_start + 4
-  return {"brake_hold": held}
+  return {"body_hold": held}
 
 
 def _drive_off(i, _):
@@ -96,15 +96,16 @@ NO_LEAD = dict(lead_visible=False, lead_d_rel=0.0, lead_v_rel=0.0)
 SCENARIO = [
   _phase("boot_stock_radar", 100, BOOT),
   _phase("fsc_settled_silencing", 120, dict(BOOT, fsc_settled=True)),
-  _phase("radar_silenced_armed_idle", 100, dict(BOOT, **SILENCED, available=True), lambda i, _: {"brake_pressed": i < 50}),
+  _phase("radar_silenced_armed_idle", 100, dict(BOOT, **SILENCED, available=True),
+         lambda i, _: {"brake_pressed": i < 50, "hbc_request": 25 <= i < 75}),
   _phase("engage_steer_ramp", 220, dict(ENGAGED, **LEAD_30, v_ego=10.0, accel=1.0), _driver_fight),
-  _phase("highway_rail", 170, dict(ENGAGED, **NO_LEAD, v_ego=20.0, accel=0.2), _highway),
+  _phase("highway_rail", 170, dict(ENGAGED, **NO_LEAD, v_ego=20.0, accel=0.2, hbc_request=True), _highway),
   _phase("approach_stop", 100, dict(ENGAGED, lead_visible=True, lead_d_rel=6.0, lead_v_rel=-1.0,
                                      long_state=LongCtrlState.stopping, accel=-1.5, torque=0.1), _approach),
   _phase("hold_on_the_plan", 150, dict(ENGAGED, **LEAD_4, long_state=LongCtrlState.stopping, accel=-1.024,
                                         standstill=True, torque=0.1)),
   _phase("hold_body_latched", 100, dict(ENGAGED, **LEAD_4, long_state=LongCtrlState.stopping, accel=-1.024,
-                                         standstill=True, brake_hold=True, torque=0.1)),
+                                         standstill=True, body_hold=True, torque=0.1)),
   _phase("latched_release", 120, dict(ENGAGED, **LEAD_4, accel=1.0, standstill=True, torque=0.1), _body_answers_pulse),
   _phase("drive_off", 100, dict(ENGAGED, **LEAD_4, accel=0.6, torque=0.1), _drive_off),
   _phase("second_approach", 50, dict(ENGAGED, **LEAD_4, long_state=LongCtrlState.stopping, accel=-1.0, v_ego=1.0)),

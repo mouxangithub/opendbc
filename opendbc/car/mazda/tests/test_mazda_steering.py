@@ -16,7 +16,7 @@ import pytest
 from opendbc.car import DT_CTRL, structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.mazda.tests.conftest import LongCtrlState, car_controller, car_params, controller_params, mazda_car_state, step
-from opendbc.car.mazda.values import CAR, CarControllerParams, STEER_TO_ZERO_EPS_FW
+from opendbc.car.mazda.values import CAR, CarControllerParams
 
 Ecu = structs.CarParams.Ecu
 
@@ -30,7 +30,7 @@ def _eps_fw(version: bytes) -> list[structs.CarParams.CarFw]:
   return [fw]
 
 
-SWAPPED_EPS_FW = _eps_fw(sorted(STEER_TO_ZERO_EPS_FW)[0])
+SWAPPED_EPS_FW = _eps_fw(b'KSD5-3210X-C-00\x00\x00\x00\x00\x00\x00\x00\x00\x00')
 LEGACY_FW_EPS = _eps_fw(b'K319-3210X-B-00' + b'\x00' * 9)  # THACO CX-5 2023, keeps the floor
 
 
@@ -67,11 +67,7 @@ class TestCarControllerParams:
     params = cx5_2022_params()
     # The ceiling is a clamp on delivered-torque counts; the scale is STEER_MAX. The clamp is
     # only meaningful if it sits at or below the scale at every speed.
-    bp, vals = params.EPS_CEILING_LOOKUP
-    for v in np.arange(0.0, 40.0, 0.25):
-      ceiling = np.interp(v, bp, vals)
-      steer_max = np.interp(v, params.STEER_MAX_LOOKUP[0], params.STEER_MAX_LOOKUP[1])
-      assert 0 < ceiling <= steer_max, f"ceiling {ceiling} vs steer_max {steer_max} at {v} m/s"
+    assert 0 < min(params.EPS_CEILING_LOOKUP[1]) and max(params.EPS_CEILING_LOOKUP[1]) <= params.STEER_MAX
 
   def test_eps_ceiling_is_monotone_and_matches_the_measured_rails(self):
     params = cx5_2022_params()
@@ -91,16 +87,10 @@ class TestCarControllerParams:
     assert params.STEER_DELTA_UP * rate_hz == pytest.approx(1200, rel=0.01)
     assert params.STEER_DELTA_DOWN * rate_hz == pytest.approx(1200, rel=0.01)
 
-  def test_cx5_2022_has_lookup(self):
-    params = cx5_2022_params()
-    assert hasattr(params, 'STEER_MAX_LOOKUP')
-    assert params.STEER_MAX == 1200
-
-  @pytest.mark.parametrize("v_ego, steer_max", [(0.0, 1200), (5.0, 1200), (10.0, 1200), (14.2, 1200),
-                                                (14.5, 800), (20.0, 800), (30.0, 800)])
-  def test_cx5_2022_steer_max_by_speed(self, v_ego, steer_max):
-    p = cx5_2022_params()
-    assert round(float(np.interp(v_ego, p.STEER_MAX_LOOKUP[0], p.STEER_MAX_LOOKUP[1]))) == steer_max
+  def test_cx5_2022_steer_max_is_flat(self):
+    # one scale at every speed: the EPS is linear in counts, and a step would put the learned
+    # torque parameters in two units (docs/zoompilot/lateral-tune.md)
+    assert cx5_2022_params().STEER_MAX == 1200
 
   def test_cx5_2022_rate_limits(self):
     params = cx5_2022_params()
@@ -138,11 +128,10 @@ class TestCarControllerParams:
     # EPS present (STEER_TO_ZERO_EPS) on a non-CX-5 model still gets the higher-authority tune
     assert params.STEER_MAX == 1200
     assert params.STEER_DRIVER_MULTIPLIER == 15
-    assert hasattr(params, 'STEER_MAX_LOOKUP')
 
   def test_upstream_envelope_without_either_flag(self):
     params = upstream_params()
-    assert not hasattr(params, 'STEER_MAX_LOOKUP')
+    assert not hasattr(params, 'EPS_CEILING_LOOKUP')
     assert not hasattr(params, 'STEER_UNDELIVERED_FRAMES')
     assert params.STEER_MAX == 800
     assert params.STEER_DRIVER_MULTIPLIER == 1
@@ -150,7 +139,7 @@ class TestCarControllerParams:
   @pytest.mark.parametrize("params", [legacy_fw_params, pre_2022_params], ids=["legacy_fw_in_2022_body", "pre_2022_platform"])
   def test_legacy_firmware_gets_the_same_envelope_and_tune(self, params):
     legacy, stz = params(), cx5_2022_params()
-    for attr in ('STEER_MAX', 'STEER_MAX_LOOKUP', 'EPS_CEILING_LOOKUP', 'STEER_DELTA_UP', 'STEER_DELTA_DOWN',
+    for attr in ('STEER_MAX', 'EPS_CEILING_LOOKUP', 'STEER_DELTA_UP', 'STEER_DELTA_DOWN',
                  'STEER_DRIVER_MULTIPLIER', 'STEER_DRIVER_SAMPLES', 'STEER_DRIVER_MARGIN'):
       assert getattr(legacy, attr) == getattr(stz, attr), attr
     # the latch reads LKAS_TRACK_STATE semantics only the steer-to-zero firmware has
@@ -209,57 +198,53 @@ class TestRejectionRecovery:
   """A panda rejection resets its rate-limit reference to zero, so a controller that keeps ramping is
   rejected on every later frame and the EPS loses its 0x243 stream (route 00000148: 1.72 s, route
   00000139: 0.75 s, drive_02: 0.63 s). About 0.6 s in the EPS raises LKAS_FAULT and the camera
-  faults 5.3 s later. The EPS echoes the last request it received; when that echo stops matching
-  the recent commands the controller restarts its ramp from zero, which the panda accepts."""
+  faults 5.3 s later. The panda reports every frame it refused back on the can stream, carstate
+  counts the torque requests among them, and the controller restarts its ramp from zero, which is
+  the one place the panda accepts next."""
 
   LAT = dict(long_active=False, enabled=True, lat_active=True, torque=1.0, v_ego=10.)
 
-  def test_a_following_echo_never_restarts_the_ramp(self, stock_cc, stock_cs):
-    echo = None
+  def test_no_report_never_restarts_the_ramp(self, stock_cc, stock_cs):
     for _ in range(60):
-      actuators, _ = step(stock_cc, stock_cs, lkas_request_echo=echo, **self.LAT)
-      echo = actuators.torqueOutputCan  # the EPS reports last frame's command this frame
-    assert stock_cc.apply_torque_last == 60 * stock_cc.params.STEER_DELTA_UP
+      actuators, _ = step(stock_cc, stock_cs, lkas_rejected=0, **self.LAT)
+    assert actuators.torqueOutputCan == 60 * stock_cc.params.STEER_DELTA_UP
 
-  def test_an_echo_two_frames_behind_is_still_a_match(self, stock_cc, stock_cs):
-    sent = [0, 0, 0]
-    for _ in range(60):
-      actuators, _ = step(stock_cc, stock_cs, lkas_request_echo=sent[-3], **self.LAT)
-      sent.append(actuators.torqueOutputCan)
-    assert stock_cc.apply_torque_last == 60 * stock_cc.params.STEER_DELTA_UP
-
-  def test_a_frozen_echo_restarts_the_ramp_from_zero(self, stock_cc, stock_cs):
+  def test_a_reported_rejection_restarts_from_one_step_of_zero(self, stock_cc, stock_cs):
     params = stock_cc.params
     for _ in range(30):
-      actuators, _ = step(stock_cc, stock_cs, lkas_request_echo=stock_cc.apply_torque_last, **self.LAT)
-    frozen = actuators.torqueOutputCan  # the last command the panda accepted
-    # every later command is rejected: the echo stays where it was. It leaves the command
-    # history after STEER_ECHO_HISTORY frames and the mismatch count runs from there.
-    for _ in range(params.STEER_ECHO_HISTORY + params.STEER_ECHO_MISMATCH_FRAMES - 1):
-      actuators, _ = step(stock_cc, stock_cs, lkas_request_echo=frozen, **self.LAT)
-    assert actuators.torqueOutputCan > frozen  # still ramping, not yet convinced
-    actuators, _ = step(stock_cc, stock_cs, lkas_request_echo=frozen, **self.LAT)
+      actuators, _ = step(stock_cc, stock_cs, lkas_rejected=0, **self.LAT)
+    assert actuators.torqueOutputCan == 30 * params.STEER_DELTA_UP
+    actuators, _ = step(stock_cc, stock_cs, lkas_rejected=1, **self.LAT)
     assert actuators.torqueOutputCan == params.STEER_DELTA_UP  # one step from zero
     # delivery resumes and the ramp rebuilds from there
     for i in range(2, 10):
-      actuators, _ = step(stock_cc, stock_cs, lkas_request_echo=stock_cc.apply_torque_last, **self.LAT)
+      actuators, _ = step(stock_cc, stock_cs, lkas_rejected=0, **self.LAT)
       assert actuators.torqueOutputCan == i * params.STEER_DELTA_UP
 
-  def test_nothing_to_recover_while_commanding_zero(self, stock_cc, stock_cs):
-    # a stale echo (the camera's or a stale EPS report) while we send zero is not a rejection
+  def test_every_reported_rejection_restarts_again(self, stock_cc, stock_cs):
+    # a stream the panda keeps refusing (its lateral not armed) holds at one step, never ramps
+    # blind to the rail
     for _ in range(20):
-      step(stock_cc, stock_cs, lkas_request_echo=500, long_active=False, enabled=False, lat_active=False, v_ego=10.)
-    assert stock_cc.echo_mismatch_frames == 0
-    actuators, _ = step(stock_cc, stock_cs, lkas_request_echo=0, **self.LAT)
+      actuators, _ = step(stock_cc, stock_cs, lkas_rejected=1, **self.LAT)
+      assert actuators.torqueOutputCan == stock_cc.params.STEER_DELTA_UP
+
+  def test_a_rejection_while_commanding_zero_changes_nothing(self, stock_cc, stock_cs):
+    for _ in range(20):
+      actuators, _ = step(stock_cc, stock_cs, lkas_rejected=1, long_active=False, enabled=False, lat_active=False, v_ego=10.)
+      assert actuators.torqueOutputCan == 0
+    assert stock_cc.apply_torque_last == 0
+    actuators, _ = step(stock_cc, stock_cs, lkas_rejected=0, **self.LAT)
     assert actuators.torqueOutputCan == stock_cc.params.STEER_DELTA_UP
 
-  def test_no_echo_yet_means_no_recovery(self, stock_cc, stock_cs):
+  def test_the_restart_applies_on_every_envelope(self):
+    # the panda's reset is the same whatever the EPS, so the legacy platforms restart too
+    cc = car_controller(alpha_long=False, candidate=CAR.MAZDA_CX9_2021)
+    cs = mazda_car_state(cc.CP, cc.CP_SP)
     for _ in range(30):
-      actuators, _ = step(stock_cc, stock_cs, lkas_request_echo=None, **self.LAT)
-    assert actuators.torqueOutputCan == 30 * stock_cc.params.STEER_DELTA_UP
-
-  def test_no_echo_constants_on_the_upstream_envelope(self):
-    assert not hasattr(upstream_params(), 'STEER_ECHO_HISTORY')
+      step(cc, cs, lkas_rejected=0, **self.LAT)
+    assert cc.apply_torque_last == 30 * cc.params.STEER_DELTA_UP
+    actuators, _ = step(cc, cs, lkas_rejected=1, **self.LAT)
+    assert actuators.torqueOutputCan == cc.params.STEER_DELTA_UP
 
 
 class TestDriverTorqueHeadroom:
@@ -291,7 +276,7 @@ class TestDriverTorqueHeadroom:
     # behind, so the margin is what covers the rest. Replay put the requirement at 2 counts.
     assert params.STEER_DRIVER_MARGIN >= 2
     # and it must stay small enough to be a margin rather than a torque cut
-    assert params.STEER_DRIVER_MARGIN * self.MULTIPLIER < 0.1 * params.STEER_MAX_LOOKUP[1][0]
+    assert params.STEER_DRIVER_MARGIN * self.MULTIPLIER < 0.1 * params.STEER_MAX
 
   def test_command_stays_under_the_panda_ceiling_while_the_driver_fights(self, cc, cs):
     params = cx5_2022_params()
@@ -299,10 +284,9 @@ class TestDriverTorqueHeadroom:
     # Every frame here was rejected on car, starving the EPS of 0x243 entirely.
     seq = [-25, -25, -25, -27, -28, -29, -30, -28, -26, -26, -29, -29, -31, -31, -31]
     out = self.drive(cc, cs, [-20] * 20 + seq)
-    steer_max = int(np.interp(6.0, params.STEER_MAX_LOOKUP[0], params.STEER_MAX_LOOKUP[1]))
     # the panda's window holds only the last 6 samples, so its ceiling uses the least
     # adverse of those -- the controller must stay at or below it
-    assert out <= self.panda_ceiling(seq[-6:], steer_max)
+    assert out <= self.panda_ceiling(seq[-6:], params.STEER_MAX)
 
   def test_a_steady_driver_torque_costs_nothing(self, cc, cs):
     # the window only bites when the samples disagree; a constant hand on the wheel must
@@ -318,10 +302,50 @@ class TestDriverTorqueHeadroom:
     seq = [30, 30, 30, 25, 20, 15, 10, 5, 0, 0]
     out = self.drive(cc, cs, [30] * 20 + seq, sign=-1.0)
     params = cx5_2022_params()
-    steer_max = int(np.interp(6.0, params.STEER_MAX_LOOKUP[0], params.STEER_MAX_LOOKUP[1]))
-    assert out >= -steer_max + (-self.ALLOWANCE + min(seq[-6:])) * self.MULTIPLIER
+    assert out >= -params.STEER_MAX + (-self.ALLOWANCE + min(seq[-6:])) * self.MULTIPLIER
 
   def test_no_window_on_platforms_without_the_2022_eps(self):
     # pre-2022 params carry no STEER_DRIVER_SAMPLES, so the deque stays one deep and the
     # behavior is the single newest sample, exactly as before
     assert not hasattr(upstream_params(), 'STEER_DRIVER_SAMPLES')
+
+
+def test_carstate_first_engage_hold_zeroes_the_steer_command(stock_cc, stock_cs):
+  # carstate derives the hold (first engagement of the cycle, standby, crawl); the controller only obeys it
+  lat = dict(long_active=False, enabled=True, lat_active=True, torque=-1.0, v_ego=0.3)
+  actuators, _ = step(stock_cc, stock_cs, steer_first_engage_hold=True, **lat)
+  assert actuators.torqueOutputCan == 0
+  assert stock_cc.apply_torque_last == 0
+  # released, the command walks up from zero at STEER_DELTA_UP
+  for i in range(1, 4):
+    actuators, _ = step(stock_cc, stock_cs, steer_first_engage_hold=False, **lat)
+    assert actuators.torqueOutputCan == -i * stock_cc.params.STEER_DELTA_UP
+
+
+def test_the_first_engage_hold_is_the_steer_to_zero_eps_only(stock_cc, stock_cs):
+  stock_cc.steer_to_zero = False
+  actuators, _ = step(stock_cc, stock_cs, steer_first_engage_hold=True, long_active=False, enabled=True, lat_active=True, torque=-1.0, v_ego=0.3)
+  assert actuators.torqueOutputCan == -stock_cc.params.STEER_DELTA_UP
+
+
+class TestTorqueTune:
+  @pytest.mark.parametrize("platform", [CAR.MAZDA_CX9_2021, CAR.MAZDA_CX5_2022])
+  def test_tune_converted_to_steer_max(self, platform):
+    # params.toml's fit (or the CX-5 2022's own) is on upstream's 800 counts: the same counts per
+    # m/s^2 at 1200
+    from opendbc.car.interfaces import get_torque_params
+    from opendbc.car.mazda.values import TORQUE_TUNES
+    toml = get_torque_params()[platform]
+    laf, friction = TORQUE_TUNES.get(platform, (toml['LAT_ACCEL_FACTOR'], toml['FRICTION']))
+    tune = car_params(platform).lateralTuning.torque
+    assert tune.latAccelFactor == pytest.approx(laf * 1.5, rel=1e-6)
+    assert tune.friction == pytest.approx(friction / 1.5, rel=1e-6)
+
+  @pytest.mark.parametrize("platform", [CAR.MAZDA_CX5_2022, CAR.MAZDA_CX9_2021])
+  def test_a_second_configure_does_not_compound(self, platform):
+    # sunnypilot re-runs configure_torque_tune on the built CarParams when torque control is enforced
+    from opendbc.car.mazda.interface import CarInterface
+    CP = car_params(platform)
+    before = (CP.lateralTuning.torque.latAccelFactor, CP.lateralTuning.torque.friction)
+    CarInterface.configure_torque_tune(CP.carFingerprint, CP.lateralTuning)
+    assert (CP.lateralTuning.torque.latAccelFactor, CP.lateralTuning.torque.friction) == pytest.approx(before, rel=1e-6)

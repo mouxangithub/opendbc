@@ -16,7 +16,7 @@ import pytest
 from opendbc.can import CANPacker, CANParser
 from opendbc.car import Bus, gen_empty_fingerprint, structs
 from opendbc.car.mazda.carcontroller import CarController
-from opendbc.car.mazda.carstate import CarState, FSC_SETTLE_FRAMES, STOCK_RADAR_ALIVE_FRAMES, STOCK_RADAR_GUARD_FRAMES
+from opendbc.car.mazda.carstate import CarState, CAM_LANEINFO_FRESH_FRAMES, FSC_SETTLE_FRAMES, STOCK_RADAR_ALIVE_FRAMES, STOCK_RADAR_GUARD_FRAMES
 from opendbc.car.mazda.interface import CarInterface
 from opendbc.car.mazda.values import CAR, CarControllerParams
 
@@ -86,9 +86,10 @@ def car_controller(alpha_long=True, candidate=CAR.MAZDA_CX5_2022) -> CarControll
 # capnp messages
 
 def car_state(standstill=False, gas=False, brake_pressed=False, v_ego=0., driver_torque=0.,
-              steering_pressed=False, available=True, cruise_engaged=False) -> structs.CarState:
+              steering_pressed=False, available=True, cruise_engaged=False, can_valid=True) -> structs.CarState:
   """structs.CarState with the fields the controller reads off CS.out."""
   ret = structs.CarState()
+  ret.canValid = can_valid
   ret.standstill = standstill
   ret.gasPressed = gas
   ret.brakePressed = brake_pressed
@@ -122,31 +123,45 @@ def car_control(enabled=None, long_active=True, lat_active=False, accel=0.5, tor
   return cc.as_reader()
 
 
-def car_control_sp(handback=False, lead_d_rel=12.0, lead_v_rel=0.0, send_button=SendButtonState.none) -> structs.CarControlSP:
+def car_control_sp(handback=False, lead_d_rel=12.0, lead_v_rel=0.0, send_button=SendButtonState.none,
+                    mads_active=False) -> structs.CarControlSP:
   cc_sp = structs.CarControlSP()
   cc_sp.stockEcuHandBack = handback
   cc_sp.leadOne.dRel = lead_d_rel
   cc_sp.leadOne.vRel = lead_v_rel
   cc_sp.intelligentCruiseButtonManagement.sendButton = send_button
+  cc_sp.mads.active = mads_active
   return cc_sp
 
 
 # CarState seeded without a bus
 
-def set_car_state(cs: CarState, out=None, *, brake_hold=False, stock_radar_alive=False, stock_radar_gone=None,
-                  fsc_settled=True, radar_was_silenced=False, radar_session_refused=False, steer_undelivered=False,
-                  lkas_blocked=False, lkas_effective=0, lkas_allowed_speed=True, lkas_request_echo=None,
-                  lkas_fault=False, crz_btns_counter=0,
-                  cancel_button=0, accel_button=0, decel_button=0, **out_kwargs) -> CarState:
+def set_car_state(cs: CarState, out=None, *, body_hold=False, stock_radar_alive=False, stock_radar_gone=None,
+                  fsc_settled=True, radar_was_silenced=False, radar_session_refused=False, radar_session_response=0,
+                  radar_bus_healthy=True, steer_undelivered=False,
+                  lkas_blocked=False, lkas_effective=0, steer_first_engage_hold=False, lkas_allowed_speed=True, lkas_rejected=0,
+                  lkas_fault=False, crz_btns_counter=0, stock_tja=0, hbc_request=False,
+                  cancel_button=0, accel_button=0, decel_button=0,
+                  tja_button=0, mrcc_button=0,
+                  mrcc_armed_raw=False, cruise_available=None, cruise_enabled=None,
+                  radar_handback_active=False, cam_laneinfo_raw=None, cam_laneinfo_live=False,
+                  **out_kwargs) -> CarState:
   """Put the controller-facing state of a real CarState where a test wants it.
 
   Every keyword is reset to its default on each call, so a test that drives frame by frame
   gets the same semantics as a fresh state each frame. The stock-radar and FSC properties are
   derived from their frame counters, so those are what get seeded: a silent radar reads as
   gone (guard-long silence) unless a test is about the gap between the two windows.
+  The filtered cruise fields mirror cruiseState unless a test overrides them explicitly,
+  which is how a brake-dropout (raw low, filtered held) is staged.
   """
   cs.out = out if out is not None else car_state(**out_kwargs)
-  cs.brake_hold = brake_hold
+  cs.body_hold = body_hold
+  cs.cruise_enabled = cs.out.cruiseState.enabled if cruise_enabled is None else cruise_enabled
+  cs.cruise_available = cs.out.cruiseState.available if cruise_available is None else cruise_available
+  cs.stock_radar_seen = True
+  cs.radar_bus_healthy = radar_bus_healthy
+  cs.radar_session_response = radar_session_response
   if stock_radar_gone is None:
     stock_radar_gone = not stock_radar_alive
   if stock_radar_alive:
@@ -161,13 +176,22 @@ def set_car_state(cs: CarState, out=None, *, brake_hold=False, stock_radar_alive
   cs.steer_undelivered = steer_undelivered
   cs.lkas_blocked = lkas_blocked
   cs.lkas_effective = lkas_effective
+  cs.steer_first_engage_hold = steer_first_engage_hold
   cs.lkas_allowed_speed = lkas_allowed_speed
-  cs.lkas_request_echo = lkas_request_echo
+  cs.lkas_rejected = lkas_rejected
   cs.lkas_fault = lkas_fault
   cs.crz_btns_counter = crz_btns_counter
+  cs.stock_tja = stock_tja
+  cs.hbc_request = hbc_request
   cs.cancel_button = cancel_button
   cs.accel_button = accel_button
   cs.decel_button = decel_button
+  cs.tja_button = tja_button
+  cs.mrcc_button = mrcc_button
+  cs.mrcc_armed_raw = mrcc_armed_raw
+  cs.radar_handback_active = radar_handback_active
+  cs.cam_laneinfo_raw = cam_laneinfo_raw
+  cs.cam_laneinfo_stale_frames = 0 if cam_laneinfo_live else CAM_LANEINFO_FRESH_FRAMES
   return cs
 
 
@@ -241,6 +265,12 @@ def frame(sends, addr, bus=0) -> bytes | None:
 
 def addrs(sends) -> list[int]:
   return [a for a, _, _ in sends]
+
+
+def hands_code(dat) -> tuple[int, int, int]:
+  """(HANDS_WARN_3_BITS, HANDS_ON_STEER_WARN, HANDS_ON_STEER_WARN_2) from a CAM_LANEINFO frame."""
+  v = parse_frame(CAM_LANEINFO, dat)
+  return int(v["HANDS_WARN_3_BITS"]), int(v["HANDS_ON_STEER_WARN"]), int(v["HANDS_ON_STEER_WARN_2"])
 
 
 def crz_info(dat) -> tuple[int, bool, bool]:

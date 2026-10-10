@@ -416,6 +416,7 @@ BO_ 158 MSG_05: 8 XXX
 
 BO_ 157 CRZ_BTNS: 8 XXX
  SG_ TJA_BUTTON : 11|1@0+ (1,0) [0|1] "" XXX
+ SG_ BIT1_INV : 15|1@0+ (1,0) [0|1] "" XXX
  SG_ BIT1 : 16|1@0+ (1,0) [0|1] "" XXX
  SG_ BIT2 : 18|1@0+ (1,0) [0|1] "" XXX
  SG_ BIT3 : 20|1@0+ (1,0) [0|1] "" XXX
@@ -628,6 +629,7 @@ BO_ 121 EPB: 8 XXX
  SG_ NEW_SIGNAL_10 : 46|1@0+ (1,0) [0|1] "" XXX
  SG_ NEW_SIGNAL_11 : 45|1@0+ (1,0) [0|1] "" XXX
  SG_ EPB_ACTIVE : 29|1@0+ (1,0) [0|15] "" XXX
+ SG_ HOLD_STATE : 19|4@0+ (1,0) [0|15] "" XXX
 
 BO_ 1070 2017_1: 8 XXX
 
@@ -820,10 +822,13 @@ CM_ SG_ 157 CAN_OFF "Disengage Cruise if enabled, if already disabled  TURN it O
 CM_ SG_ 552 MORE_GEAR "";
 CM_ SG_ 552 GEAR "0 Shifting, 1 P, 2 R, 3 N, 4 D";
 CM_ SG_ 552 GEAR_BOX "0 P, 14 R, 1 though 6 D for speeds, 15 Shift";
+CM_ SG_ 552 BRAKE_HOLD "Auto Hold holding the car; lights HOLD on the dash. Joins an ACC standstill hold only when Auto Hold is armed";
+CM_ SG_ 121 HOLD_STATE "Standstill hold for cruise: the body takes over a few seconds into a stop held by STOPPING, with or without Auto Hold. Stock MRCC relaxes on HOLDING and releases it with RESUME_UNLATCHING";
 CM_ SG_ 540 HANDS_ON_STEER_WARN "0 no warning, b warning";
 CM_ SG_ 540 DISTANCE_SETTING "Radar distance 0: disabled, 1: 4 bars, 2: 3 bars, 3: 2 bars, 4: 1 bar";
 CM_ SG_ 1143 REAR_CT_ALERT "Rear Cross Traffic Alert";
 VAL_ 552 GEAR 1 "P" 2 "R" 3 "N" 4 "D" ;
+VAL_ 121 HOLD_STATE 1 "INIT" 2 "IDLE" 3 "HOLDING" 5 "RELEASING" ;
 VAL_ 540 RADAR_HAS_LEAD 0 "NO LEAD" 1 "HAS LEAD" ;
 VAL_ 540 RADAR_LEAD_RELATIVE_DISTANCE 0 "NO LEAD" 1 "FARTHEST" 2 "4" 3 "3" 4 "2" 5 "NEAREST" ;
 VAL_ 1143 LEFT_BS_STATUS 0 "No object detected" 1 "Object detected in left blindspot" 2 "Object detected in left blindspot with blinker - warning"

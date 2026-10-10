@@ -10,7 +10,8 @@ reproduce stock captures byte for byte; the hex values below come from real rada
 import pytest
 
 from opendbc.car.mazda import mazdacan
-from opendbc.car.mazda.tests.conftest import CAM_LANEINFO, LEAD_TRACK, parse_frame
+from opendbc.car.mazda.values import Buttons
+from opendbc.car.mazda.tests.conftest import CAM_LANEINFO, LEAD_TRACK, hands_code, parse_frame
 
 
 def crz_info_reference_checksum(dat):
@@ -33,6 +34,49 @@ def test_alert_command_relays_state_but_not_the_tja_churn(packer):
   out = parse_frame(CAM_LANEINFO, dat)
   assert out["ERR_BIT"] == 1 and out["LINE_VISIBLE"] == 1 and out["LANE_LINES"] == 2 and out["S1"] == 1
   assert out["TJA"] == 0 and out["TJA_TRANSITION"] == 0
+
+
+@pytest.mark.parametrize("steer_required", [False, True])
+def test_alert_command_sends_the_frame_the_cluster_draws(packer, steer_required):
+  # On-car map 2026-09-30: the cluster draws the hands-on-wheel text only with the 0b111 code
+  # and HANDS_ON_STEER_WARN_2 together; (0,1,0), (0,1,1), (7,1,0) and (0,0,1) draw nothing.
+  cam_msg = {"LINE_VISIBLE": 0, "LINE_NOT_VISIBLE": 1, "LANE_LINES": 1, "BIT1": 1,
+             "BIT2": 0, "BIT3": 0, "NO_ERR_BIT": 0, "ERR_BIT": 0,
+             "TJA": 0, "TJA_TRANSITION": 0, "S1": 0, "S1_HBEAM": 0}
+  dat = mazdacan.create_alert_command(packer, cam_msg, ldw=False, steer_required=steer_required)[1]
+  assert hands_code(dat) == ((0b111, 1, 1) if steer_required else (0, 0, 0))
+  out = parse_frame(CAM_LANEINFO, dat)
+  assert out["LDW_WARN_LL"] == 0 and out["LDW_WARN_RL"] == 0
+
+
+WHITE_HUD_BASE = bytes.fromhex("4201000000001040")  # the canonical OFF-family idle base
+
+
+def test_white_hud_allowlist_maps_tja_states_to_their_idle_base():
+  # a frame that already carries a TJA/transition state maps back to its idle base
+  assert mazdacan.white_hud_allowlist_base(bytes.fromhex("4201000020001040")) == WHITE_HUD_BASE
+  # the counter-nibble twins are separately audited entries, not normalized away
+  assert mazdacan.white_hud_allowlist_base(bytes.fromhex("4201000000001060")) == bytes.fromhex("4201000000001060")
+
+
+def test_apply_mads_white_hud_only_touches_an_allowlisted_base():
+  assert mazdacan.apply_mads_white_hud(WHITE_HUD_BASE, WHITE_HUD_BASE, True) == bytes.fromhex("4201000020001040")
+  assert mazdacan.apply_mads_white_hud(b"\xff" * 8, b"\xff" * 8, True) == b"\xff" * 8
+  assert mazdacan.apply_mads_white_hud(WHITE_HUD_BASE, WHITE_HUD_BASE, False) == WHITE_HUD_BASE
+
+
+def test_is_mads_white_hud_requires_the_exact_xor():
+  assert mazdacan.is_mads_white_hud(bytes.fromhex("4201000020001040"))
+  assert not mazdacan.is_mads_white_hud(WHITE_HUD_BASE)
+  assert not mazdacan.is_mads_white_hud(bytes.fromhex("4201000030001040"))
+
+
+def test_buttons_never_carry_the_tja_bit(packer):
+  # never pressed by openpilot on either bus: on the car's side it toggles MADS and arms MRCC,
+  # on the camera's side it switches the car's own lane-keep setting off
+  for button in (Buttons.CANCEL, Buttons.RESUME, Buttons.SET_PLUS, Buttons.SET_MINUS, Buttons.TJA):
+    _, dat, bus = mazdacan.create_button_cmd(packer, None, 3, button)
+    assert bus == 0 and not dat[1] & 0x08
 
 
 @pytest.mark.parametrize("counter", range(16))
@@ -98,11 +142,24 @@ def test_crz_info_accel_encoding_and_checksum(packer, stopping, unlatching):
   (True, True, 2, True, 3, True, "0a018b6000001000"),      # stop-and-go hold (near phase)
   (True, True, 2, True, 4, True, "0a018b8000001000"),      # stop-and-go hold (far phase)
   (True, True, 2, True, 3, False, "0a018b6000000000"),     # relaxed hold, ACC_ACTIVE_2 drops
-  (True, True, 1, True, 2, True, "0a01874000001000"),      # driver gap 1 mirrored to the dash
+  (True, True, 1, True, 2, True, "0a01874000001000"),      # wire gap 1 (4 bars on the cluster)
 ])
 def test_crz_ctrl_golden_bytes(packer, long_active, acc_available, gap, has_lead, phase, acc_active_2, expected):
   dat = mazdacan.create_crz_ctrl(packer, 0, long_active, acc_available, gap, has_lead, phase, acc_active_2)[1]
   assert dat.hex() == expected
+
+
+@pytest.mark.parametrize("long_active, acc_available, gap, has_lead, phase, acc_active_2, expected", [
+  (False, False, 0, False, 0, False, "0221010000000000"),  # standby: the stock radar's frame
+  (False, True, 2, False, 0, False, "02210b0000000000"),   # MRCC armed
+  (True, True, 2, True, 1, True, "0a218b2000001000"),      # engaged
+])
+def test_crz_ctrl_relays_hbc_arming(packer, long_active, acc_available, gap, has_lead, phase, acc_active_2, expected):
+  dat = mazdacan.create_crz_ctrl(packer, 0, long_active, acc_available, gap, has_lead, phase, acc_active_2,
+                                 hbc_request=True)[1]
+  assert dat.hex() == expected
+  bare = mazdacan.create_crz_ctrl(packer, 0, long_active, acc_available, gap, has_lead, phase, acc_active_2)[1]
+  assert bytes(a ^ b for a, b in zip(dat, bare, strict=True)) == bytes([0, 0x20, 0, 0, 0, 0, 0, 0])
 
 
 def test_radar_frames_match_stock():
@@ -115,8 +172,9 @@ def test_radar_frames_match_stock():
     (0x365, "fff7fe7ffbff3fc0"),
     (0x366, "fff7fe7ffbff3fc0"),
   ]
-  frames = mazdacan.create_radar_frames(0, 0, None)
-  assert [(f.address, f.dat.hex()) for f in frames] == expected
+  for bus in (0, 2):
+    frames = mazdacan.create_radar_frames(bus, 0, None)
+    assert [(f.address, f.dat.hex()) for f in frames] == expected
 
 
 def test_radar_frames_counter_and_lead_track():
@@ -126,6 +184,13 @@ def test_radar_frames_counter_and_lead_track():
   assert [f.dat[7] & 0x0f for f in frames[1:]] == [15] * 6
   tracks = {f.address: f.dat.hex() for f in frames}
   assert tracks[0x364] == "0a4e00001c00000f"
+
+
+def test_g46l_radar_frames_are_the_static_capture_alone():
+  # the G46L never sends track messages, lead or not: the lead rides CRZ_CTRL alone
+  for lead in (None, (10.25, 0.)):
+    frames = mazdacan.create_radar_frames(0, 15, lead, g46l=True)
+    assert [(f.address, f.dat.hex(), f.src) for f in frames] == [(0x499, "0098400000000000", 0)]
 
 
 def test_lead_track_constant_bytes_match_the_stock_release_capture():
