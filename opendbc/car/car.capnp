@@ -229,6 +229,11 @@ struct CarState {
   vehicleNaviSpeed @69 :Float32;
   vehicleNaviAvailable @70 :Bool;
 
+  # Bind independent radar decoding (radarcan) to the exact CAN batch and ego
+  # state used by card. Empty batches still represent a control tick; receiveMonoTime
+  # is monotonic and must not be replaced by the later publication timestamp.
+  radarInput @71 :RadarInput;
+
   # cruise state
   cruiseState @10 :CruiseState;
 
@@ -309,6 +314,15 @@ struct CarState {
       paddleLeft @13;
       paddleRight @14;
     }
+  }
+
+  # Bind independent radar decoding (radarcan) to the exact CAN batch and ego
+  # state used by card. Empty batches still represent a control tick.
+  struct RadarInput {
+    firstCanMonoTime @0 :UInt64;
+    lastCanMonoTime @1 :UInt64;
+    canPacketCount @2 :UInt32;
+    receiveMonoTime @3 :UInt64;
   }
 
   deprecated :group {
