@@ -467,6 +467,8 @@ class CarState(CarStateBase, CarStateExt):
     pt_messages = [
       # A body without the standstill hold may not send this, so it never gates canValid.
       ("EPB", float("nan")),
+      # Only cars with the navigation SD card send the map speed limit.
+      ("NAV_SPEED_LIMIT", float("nan")),
     ]
     if CP.openpilotLongitudinalControl:
       # Do not require liveness for frames intentionally absent after radar teardown.

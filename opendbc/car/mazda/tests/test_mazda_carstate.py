@@ -23,6 +23,7 @@ CAM_LANEINFO = 0x440
 CAM_EMPTY = 0x21d
 CAM_PEDESTRIAN = 0x25d
 CAM_TRAFFIC_SIGNS = 0x35f
+NAV_SPEED_LIMIT = 0x3d1
 GEAR = 0x228
 EPB = 0x79
 RADAR_UDS_RESP = 0x76c
@@ -329,6 +330,15 @@ class TestTwoMasterGuard:
     assert ret.cruiseState.enabled
 
 
+def speed_limit(*msgs):
+  """carStateSP.speedLimit after two frames of the given messages."""
+  CI = car_interface()
+  ret_sp = None
+  for i in range(2):
+    _, ret_sp = feed(CI, i, *msgs)
+  return ret_sp.speedLimit
+
+
 class TestSpeedSignLimit:
   """CAM_TRAFFIC_SIGNS.SPEED_SIGN_UNIT is the 2-bit field carrying the display unit (upstream's
   1-bit SPEED_SIGN_ON at bit 12 is its low bit): 1 = limit displayed in mph, 2 = displayed in
@@ -346,11 +356,7 @@ class TestSpeedSignLimit:
     ("1920000002010900", 100 * CV.KPH_TO_MS),  # NZ 100 km/h
   ])
   def test_unit_comes_from_the_frame(self, payload, expected_ms):
-    CI = car_interface()
-    ret_sp = None
-    for i in range(2):
-      _, ret_sp = feed(CI, i, (CAM_TRAFFIC_SIGNS, bytes.fromhex(payload), 2))
-    assert ret_sp.speedLimit == pytest.approx(expected_ms, rel=1e-6, abs=1e-12)
+    assert speed_limit((CAM_TRAFFIC_SIGNS, bytes.fromhex(payload), 2)) == pytest.approx(expected_ms, rel=1e-6, abs=1e-12)
 
   @pytest.mark.parametrize("sign_on, speed_sign", [
     (1, 120),  # above any real mph posting
@@ -359,12 +365,32 @@ class TestSpeedSignLimit:
     (1, 0),    # displayed-but-zero
   ])
   def test_implausible_frames_read_as_no_limit(self, sign_on, speed_sign):
-    msg = packer().make_can_msg("CAM_TRAFFIC_SIGNS", 2, {"SPEED_SIGN_UNIT": sign_on, "SPEED_SIGN": speed_sign})
-    CI = car_interface()
-    ret_sp = None
-    for i in range(2):
-      _, ret_sp = feed(CI, i, msg)
-    assert ret_sp.speedLimit == 0.0
+    assert speed_limit(packer().make_can_msg("CAM_TRAFFIC_SIGNS", 2, {"SPEED_SIGN_UNIT": sign_on, "SPEED_SIGN": speed_sign})) == 0.0
+
+
+class TestNavSpeedLimit:
+  """NAV_SPEED_LIMIT (0x3D1, car bus) is the navigation unit's map limit, in the same 7-bit value
+  plus 2-bit unit layout as CAM_TRAFFIC_SIGNS, at bytes 3-4. A 2021 CX-5 without camera sign
+  recognition sends CAM_TRAFFIC_SIGNS all zero and the limit only here. On a CX-5 2022 with both,
+  the two agree on 81% of frames and the camera's reading of a posted sign wins the rest.
+  Payloads are real US captures (routes 0000026e-0000027f); the km/h case is packed, by analogy
+  with CAM_TRAFFIC_SIGNS, as no metric nav capture exists yet."""
+
+  @pytest.mark.parametrize("nav, cam, expected_ms", [
+    ("000000000011091a", "0000000002005300", 0.0),                # no limit on either
+    ("000000065011051a", "0000000002005300", 25 * CV.MPH_TO_MS),  # blank camera: the map fills in
+    ("0000000b5011091a", "0000000002005300", 45 * CV.MPH_TO_MS),
+    ("000000065011051a", None, 25 * CV.MPH_TO_MS),                # no camera frame at all
+    ("000000065011051a", "0b50000002005300", 45 * CV.MPH_TO_MS),  # the camera's sign beats the map
+  ])
+  def test_camera_first_then_nav(self, nav, cam, expected_ms):
+    msgs = [(NAV_SPEED_LIMIT, bytes.fromhex(nav), 0)]
+    if cam is not None:
+      msgs.append((CAM_TRAFFIC_SIGNS, bytes.fromhex(cam), 2))
+    assert speed_limit(*msgs) == pytest.approx(expected_ms, rel=1e-6, abs=1e-12)
+
+  def test_metric_nav_limit(self):
+    assert speed_limit(packer().make_can_msg("NAV_SPEED_LIMIT", 0, {"SPEED_SIGN_UNIT": 2, "SPEED_SIGN": 60})) == pytest.approx(60 * CV.KPH_TO_MS)
 
 
 class TestMainOffDebounce:
