@@ -10,8 +10,8 @@ from opendbc.car import gen_empty_fingerprint
 from opendbc.car.mazda.interface import CarInterface
 from opendbc.car.mazda.values import CAR, MazdaFlags
 from opendbc.car.structs import CarParams
-from opendbc.sunnypilot.car.interfaces import (get_speed_dep_config, get_speed_dep_config_for_car, get_steer_rail_schedule,
-                                             get_steer_slew_schedule, get_tune_scale)
+from opendbc.sunnypilot.car.lateral_tune import (get_speed_dep_config, get_speed_dep_config_for_car, get_steer_rail_schedule,
+                                               get_steer_slew_schedule, get_tune_scale)
 
 
 def cx5_2022_cp() -> CarParams:
@@ -79,7 +79,7 @@ class TestSpeedDepConfig:
     assert len(cfg['laf_bp']) == len(cfg['speed_bp']) == len(cfg['friction_bp'])
 
   def test_flagged_entry_stays_empty_behind_a_floor(self, monkeypatch):
-    import opendbc.sunnypilot.car.interfaces as mod
+    import opendbc.sunnypilot.car.lateral_tune as mod
     monkeypatch.setattr(mod, 'get_speed_dep_config', lambda: {'MAZDA_CX9_2021': {'requires_steer_to_zero': True, 'speed_bp': [30.0]}})
     assert get_speed_dep_config_for_car(brand_cp(**STOCK_MAZDA)) == {}
 
