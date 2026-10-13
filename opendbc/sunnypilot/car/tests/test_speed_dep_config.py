@@ -152,7 +152,8 @@ class TestLegacyFirmwareEntry:
     cfg = get_speed_dep_config_for_car(legacy_fw_cp())
     i = full.index(cfg['speed_bp'][0])
     assert cfg['min_speed'] == pytest.approx((full[i - 1] + full[i]) / 2)
-    assert 'min_speed' not in get_speed_dep_config_for_car(cx5_2022_cp())
+    # the steer-to-zero car keeps the table's own edge, if it sets one
+    assert get_speed_dep_config_for_car(cx5_2022_cp()).get('min_speed') == get_speed_dep_config()['MAZDA_CX5_2022'].get('min_speed')
 
   def test_legacy_firmware_shares_the_rail_and_slew(self):
     cp, stz = legacy_fw_cp(), cx5_2022_cp()
