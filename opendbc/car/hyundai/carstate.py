@@ -8,6 +8,7 @@ from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.hyundai.values import HyundaiFlags, CAR, DBC, Buttons, CarControllerParams
 from opendbc.car.interfaces import CarStateBase
+from opendbc.car.byd.byd_params import BydParams
 
 from opendbc.sunnypilot.car.hyundai.carstate_ext import CarStateExt
 from opendbc.sunnypilot.car.hyundai.escc import EsccCarStateBase
@@ -80,6 +81,9 @@ class CarState(CarStateBase, EsccCarStateBase, MadsCarState, CarStateExt):
     self.cluster_speed_counter = CLUSTER_SAMPLE_RATE
 
     self.params = CarControllerParams(CP)
+    # Persistent openpilot Params for the stock-nav CAN tunables below;
+    # CarControllerParams only carries tuning constants (e.g. STEER_THRESHOLD).
+    self.op_params = BydParams()
 
     # Stock-navigation CAN state (cp L6). Only the legacy 0x4BE-family profile exists here;
     # the PV5 wrapped-navigation variant is not in this fork.
@@ -92,8 +96,8 @@ class CarState(CarStateBase, EsccCarStateBase, MadsCarState, CarStateExt):
     self.totalDistance = 0.0
     self.vehicleSpeedCameraParamsCounter = 0
     self.vehicleSpeedCameraDistanceTime = 0.0
-    self.vehicleNaviCanControl = min(3, max(0, self.params.get_int("VehicleNaviCanControl")))
-    self.vehicleNaviSchoolZoneControl = self.params.get_bool("VehicleNaviSchoolZoneControl")
+    self.vehicleNaviCanControl = min(3, max(0, self.op_params.get_int("VehicleNaviCanControl")))
+    self.vehicleNaviSchoolZoneControl = self.op_params.get_bool("VehicleNaviSchoolZoneControl")
     self.vehicleNaviEvents = []
     self.vehicleNaviSegmentTimestamp = 0
     self.vehicleNaviProfileTimestamp = 0
@@ -389,13 +393,13 @@ class CarState(CarStateBase, EsccCarStateBase, MadsCarState, CarStateExt):
       return False
 
     self.vehicleSpeedCameraParamsCounter = 0
-    distance_time_tenths = self.params.get_int("VehicleSpeedCameraDistanceTime")
+    distance_time_tenths = self.op_params.get_int("VehicleSpeedCameraDistanceTime")
     distance_time = self._vehicle_speed_camera_distance_time(distance_time_tenths)
     changed = distance_time != self.vehicleSpeedCameraDistanceTime
     self.vehicleSpeedCameraDistanceTime = distance_time
     if changed and self.vehicleNaviCameraStatusTarget is not None:
       self.vehicleNaviCameraStatusTarget = self.totalDistance + self.vehicleNaviCameraStatusSpeed * distance_time
-    vehicle_navi_can_control = self._vehicle_navi_can_control_mode(self.params.get_int("VehicleNaviCanControl"))
+    vehicle_navi_can_control = self._vehicle_navi_can_control_mode(self.op_params.get_int("VehicleNaviCanControl"))
     if vehicle_navi_can_control != self.vehicleNaviCanControl:
       self.vehicleNaviCanControl = vehicle_navi_can_control
       if not vehicle_navi_can_control:
@@ -403,7 +407,7 @@ class CarState(CarStateBase, EsccCarStateBase, MadsCarState, CarStateExt):
         self._clear_vehicle_navi_speed_zone()
       elif vehicle_navi_can_control >= 2:
         self._clear_vehicle_navi_route_filtered_events()
-    vehicle_navi_school_zone_control = self.params.get_bool("VehicleNaviSchoolZoneControl")
+    vehicle_navi_school_zone_control = self.op_params.get_bool("VehicleNaviSchoolZoneControl")
     if vehicle_navi_school_zone_control != self.vehicleNaviSchoolZoneControl:
       self.vehicleNaviSchoolZoneControl = vehicle_navi_school_zone_control
       if not vehicle_navi_school_zone_control:
