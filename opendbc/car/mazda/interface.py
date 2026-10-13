@@ -90,6 +90,8 @@ class CarInterface(CarInterfaceBase):
   def _get_params_sp(stock_cp: structs.CarParams, ret: structs.CarParamsSP, candidate, fingerprint: dict[int, dict[int, int]],
                      car_fw: list[structs.CarParams.CarFw], alpha_long: bool, is_release_sp: bool, docs: bool) -> structs.CarParamsSP:
     ret.intelligentCruiseButtonManagementAvailable = True
+    # MRCC holds 30 km/h at its floor in either unit mode: an imperial dash shows 19 (18.64 mph).
+    ret.minimumSetSpeed = 30. * CV.KPH_TO_MS
 
     # A carried-forward CarPlatformBundle can disagree with the physical car after a
     # hardware swap or a branch switch without reinstall.
