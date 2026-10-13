@@ -19,21 +19,6 @@ Measurements behind the Mazda entry: docs/zoompilot/icbm.md.
 """
 from dataclasses import dataclass
 
-from opendbc.car import structs
-
-SendButtonState = structs.IntelligentCruiseButtonManagement.SendButtonState
-
-# the servo's hold sends are a stream of presses, valid wherever taps are; a brand without a
-# native hold cadence acts on them as the tap of the same direction
-TAP_EQUIVALENT = {
-  SendButtonState.increaseHold: SendButtonState.increase,
-  SendButtonState.decreaseHold: SendButtonState.decrease,
-}
-
-
-def tap_equivalent(send_button: SendButtonState) -> SendButtonState:
-  return TAP_EQUIVALENT.get(send_button, send_button)
-
 
 @dataclass(frozen=True)
 class ICBMActuationProfile:

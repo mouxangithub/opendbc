@@ -18,10 +18,7 @@ SendButtonState = structs.IntelligentCruiseButtonManagement.SendButtonState
 BUTTONS = {
   SendButtonState.increase: Buttons.SET_PLUS,
   SendButtonState.decrease: Buttons.SET_MINUS,
-  SendButtonState.increaseHold: Buttons.SET_PLUS,
-  SendButtonState.decreaseHold: Buttons.SET_MINUS,
 }
-HOLD_BUTTONS = (SendButtonState.increaseHold, SendButtonState.decreaseHold)
 
 # The body ECU registers at most ~1 discrete press per 200 ms and drops presses sent faster.
 # Hold frames go out at CRZ_BTNS's native 10 Hz, which is what a real held button looks like
@@ -52,7 +49,7 @@ class IntelligentCruiseButtonManagementInterface(IntelligentCruiseButtonManageme
       send_button = BUTTONS[self.ICBM.sendButton]
       since_last_send = (self.frame - self.last_button_frame) * DT_CTRL
 
-      if self.ICBM.sendButton in HOLD_BUTTONS:
+      if CC_SP.zoompilot.icbmHold:
         # sustained hold: one frame per native 10 Hz slot, so the fixed +1 offset stays unique
         if since_last_send > HOLD_PERIOD:
           can_sends.append(mazdacan.create_button_cmd(packer, self.CP, CS.crz_btns_counter + 1, send_button))

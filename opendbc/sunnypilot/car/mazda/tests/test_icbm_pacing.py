@@ -18,6 +18,8 @@ from opendbc.car.mazda.values import MazdaFlags
 from opendbc.sunnypilot.car.mazda.icbm import IntelligentCruiseButtonManagementInterface
 
 SendButtonState = structs.IntelligentCruiseButtonManagement.SendButtonState
+INCREASE_HOLD = (SendButtonState.increase, True)
+DECREASE_HOLD = (SendButtonState.decrease, True)
 
 
 def make_carparams():
@@ -29,8 +31,10 @@ def make_carparams():
 
 
 def make_carcontrolsp(send_button):
+  send_button, icbm_hold = send_button if isinstance(send_button, tuple) else (send_button, False)
   ccsp = structs.CarControlSP()
   ccsp.intelligentCruiseButtonManagement.sendButton = send_button
+  ccsp.zoompilot.icbmHold = icbm_hold
   return ccsp
 
 
@@ -43,7 +47,7 @@ class TestIcbmEmission(unittest.TestCase):
     self.last_button_frame = 0
 
   def run_frames(self, buttons_by_frame):
-    """buttons_by_frame: iterable of SendButtonState, one per 100Hz frame. Frame numbering
+    """buttons_by_frame: iterable of SendButtonState (or a *_HOLD pair), one per 100Hz frame. Frame numbering
     continues across calls. Returns the frame numbers on which a button frame was sent."""
     send_frames = []
     for btn in buttons_by_frame:
@@ -74,19 +78,19 @@ class TestIcbmEmission(unittest.TestCase):
   def test_hold_emits_at_native_rate(self):
     """One forged frame per native 10 Hz CRZ_BTNS slot, so the +1 counter offset stays
     unique (see HOLD_PERIOD in icbm.py for the wire measurement)."""
-    sends = self.run_frames([SendButtonState.increaseHold] * 200)
+    sends = self.run_frames([INCREASE_HOLD] * 200)
 
     assert len(sends) >= 15, f"hold must emit at ~10 Hz, got {len(sends)} in 2 s"
     assert all(10 <= g <= 12 for g in self.gaps(sends)), f"hold gaps off native rate: {self.gaps(sends)}"
 
   def test_hold_release_stops_emission(self):
-    self.run_frames([SendButtonState.increaseHold] * 60)
+    self.run_frames([INCREASE_HOLD] * 60)
     sends = self.run_frames([SendButtonState.none] * 60)
     assert sends == []
 
   def test_hold_then_taps_repace(self):
     """After a hold, remainder taps go back to the 5 Hz floor."""
-    self.run_frames([SendButtonState.increaseHold] * 60)
+    self.run_frames([INCREASE_HOLD] * 60)
     sends = self.run_frames([SendButtonState.increase] * 100)
     assert all(g >= 20 for g in self.gaps(sends))
 
@@ -106,7 +110,7 @@ class TestIcbmEmission(unittest.TestCase):
 
   def test_driver_press_suppresses_hold(self):
     self.CS.decel_button = 1
-    sends = self.run_frames([SendButtonState.decreaseHold] * 100)
+    sends = self.run_frames([DECREASE_HOLD] * 100)
     assert sends == []
 
 
