@@ -3,7 +3,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import Enum, IntFlag
 
-from opendbc.car import Bus, CarSpecs, PlatformConfig, Platforms
+from opendbc.car import Bus, CarSpecs, PlatformConfig, Platforms, CanBusBase
 from opendbc.car.lateral import AngleSteeringLimits
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.structs import CarParams
@@ -15,6 +15,23 @@ MIN_ACC_SPEED = 19. * CV.MPH_TO_MS
 PEDAL_TRANSITION = 10. * CV.MPH_TO_MS
 
 
+class CanBus(CanBusBase):
+  def __init__(self, CP=None, fingerprint=None) -> None:
+    super().__init__(CP, fingerprint)
+
+  @property
+  def pt(self) -> int:
+    return self.offset
+
+  @property
+  def alt(self) -> int:
+    return self.offset + 1
+
+  @property
+  def cam(self) -> int:
+    return self.offset + 2
+
+
 class CarControllerParams:
   STEER_STEP = 1
   STEER_MAX = 1500
@@ -23,14 +40,16 @@ class CarControllerParams:
   # Lane Tracing Assist (LTA) control limits
   ANGLE_LIMITS: AngleSteeringLimits = AngleSteeringLimits(
     # EPS ignores commands above this angle and causes PCS to fault
-    94.9461,  # deg
+    # Increased from 94.9461 to 180.0 for testing; revert if PCS faults occur.
+    180.0,  # deg
     # Assuming a steering ratio of 13.7:
     # Limit to ~2.0 m/s^3 up (7.5 deg/s), ~3.5 m/s^3 down (13 deg/s) at 75 mph
     # Worst case, the low speed limits will allow ~4.0 m/s^3 up (15 deg/s) and ~4.9 m/s^3 down (18 deg/s) at 75 mph,
     # however the EPS has its own internal limits at all speeds which are less than that:
     # Observed internal torque rate limit on TSS 2.5 Camry and RAV4 is ~1500 units/sec up and down when using LTA
-    ([5, 25], [0.3, 0.15]),
-    ([5, 25], [0.36, 0.26]),
+    # [放宽] 中高速段 +20% 帮助上下闸道弯跟随更顺；低速段仅 +17% 以免触发 EPS PCS fault
+    ([5, 25], [0.35, 0.18]),
+    ([5, 25], [0.42, 0.30]),
   )
 
   MAX_LTA_DRIVER_TORQUE_ALLOWANCE = 150  # slightly above steering pressed allows some resistance when changing lanes
@@ -74,6 +93,9 @@ class ToyotaFlags(IntFlag):
   # these cars can utilize 2.0 m/s^2
   RAISED_ACCEL_LIMIT = 1024
   SECOC = 2048
+  # The EPS firmware accepts dummy SecOC MACs for lateral frames. Longitudinal
+  # control remains entirely stock on this platform.
+  EPS_BYPASS_SECOC = 4096
 
   # deprecated flags
   # these cars are speculated to allow stop and go when the DSU is unplugged or disabled with sDSU
@@ -100,6 +122,12 @@ class ToyotaCarDocs(CarDocs):
 class ToyotaSecOcCarDocs(ToyotaCarDocs):
   support_type: SupportType = SupportType.CUSTOM
   support_link: str = "#secoc-cars-with-recoverable-keys"
+
+
+@dataclass
+class ToyotaPatchedCarDocs(ToyotaSecOcCarDocs):
+  support_type: SupportType = SupportType.CUSTOM
+  support_link: str = "#secoc-cars-with-eps-patched"
 
 
 @dataclass
@@ -291,6 +319,20 @@ class CAR(Platforms):
     [ToyotaSecOcCarDocs("Toyota RAV4 Prime 2021-23", min_enable_speed=MIN_ACC_SPEED)],
     CarSpecs(mass=4372. * CV.LB_TO_KG, wheelbase=2.68, steerRatio=16.88, tireStiffnessFactor=0.5533),
   )
+  TOYOTA_RAV4_PRIME_PATCHED = ToyotaSecOCPlatformConfig(
+    [ToyotaPatchedCarDocs("Toyota RAV4 Prime 2023-24", min_enable_speed=MIN_ACC_SPEED)],
+    CarSpecs(mass=4372. * CV.LB_TO_KG, wheelbase=2.68, steerRatio=16.88, tireStiffnessFactor=0.5533),
+    flags=ToyotaFlags.EPS_BYPASS_SECOC,
+  )
+  TOYOTA_WILDLANDER_PHEV = ToyotaSecOCPlatformConfig(
+    [ToyotaCarDocs("Toyota Wildlander PHEV 2021-23", min_enable_speed=MIN_ACC_SPEED)],
+    CarSpecs(mass=4155. * CV.LB_TO_KG, wheelbase=2.69, steerRatio=16.88, tireStiffnessFactor=0.5533),
+  )
+  TOYOTA_WILDLANDER_PHEV_PATCHED = ToyotaSecOCPlatformConfig(
+    [ToyotaPatchedCarDocs("Toyota Wildlander PHEV 2023-24", min_enable_speed=MIN_ACC_SPEED)],
+    CarSpecs(mass=4155. * CV.LB_TO_KG, wheelbase=2.69, steerRatio=16.88, tireStiffnessFactor=0.5533),
+    flags=ToyotaFlags.EPS_BYPASS_SECOC,
+  )
   TOYOTA_YARIS = ToyotaSecOCPlatformConfig(
     [ToyotaSecOcCarDocs("Toyota Yaris (Non-US only) 2020, 2023", min_enable_speed=MIN_ACC_SPEED)],
     CarSpecs(mass=1170, wheelbase=2.55, steerRatio=14.80, tireStiffnessFactor=0.5533),
@@ -309,6 +351,11 @@ class CAR(Platforms):
   TOYOTA_SIENNA_4TH_GEN = ToyotaSecOCPlatformConfig(
     [ToyotaSecOcCarDocs("Toyota Sienna 2021-23", min_enable_speed=MIN_ACC_SPEED)],
     CarSpecs(mass=4625. * CV.LB_TO_KG, wheelbase=3.06, steerRatio=17.8, tireStiffnessFactor=0.444),
+  )
+  TOYOTA_SIENNA_PATCHED = ToyotaSecOCPlatformConfig(
+    [ToyotaPatchedCarDocs("Toyota Sienna 2021-26 PATCHED", min_enable_speed=MIN_ACC_SPEED)],
+    CarSpecs(mass=4625. * CV.LB_TO_KG, wheelbase=3.06, steerRatio=17.8, tireStiffnessFactor=0.444),
+    flags=ToyotaFlags.EPS_BYPASS_SECOC,
   )
 
   # Lexus
@@ -331,6 +378,11 @@ class CAR(Platforms):
       ToyotaCarDocs("Lexus ES Hybrid 2019-25", video="https://youtu.be/BZ29osRVJeg?t=12"),
     ],
     LEXUS_ES.specs,
+  )
+  LEXUS_ES_PATCHED = ToyotaSecOCPlatformConfig(
+    [ToyotaPatchedCarDocs("Lexus ES 2022-26 PATCHED", min_enable_speed=MIN_ACC_SPEED)],
+    CarSpecs(mass=3677. * CV.LB_TO_KG, wheelbase=2.8702, steerRatio=16.0, tireStiffnessFactor=0.444),
+    flags=ToyotaFlags.EPS_BYPASS_SECOC,
   )
   LEXUS_IS = PlatformConfig(
     [ToyotaCarDocs("Lexus IS 2017-19")],

@@ -8,6 +8,12 @@ from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP
 GearShifter = structs.CarState.GearShifter
 
 
+def make_car_params(num_safety_configs: int = 1) -> structs.CarParams:
+  cp = structs.CarParams()
+  cp.safetyConfigs = [structs.CarParams.SafetyConfig() for _ in range(num_safety_configs)]
+  return cp
+
+
 def make_car_params_sp(enabled: bool = True) -> structs.CarParamsSP:
   cp_sp = structs.CarParamsSP()
   cp_sp.flags = ToyotaFlagsSP.SP_AUTO_BRAKE_HOLD if enabled else 0
@@ -29,15 +35,15 @@ class FakeCarState:
 
 @patch("opendbc.sunnypilot.car.toyota.auto_brake_hold.toyotacan.create_brake_hold_command")
 class TestAutoBrakeHoldCarController(unittest.TestCase):
-  def _make(self):
-    return AutoBrakeHoldCarController(structs.CarParams(), make_car_params_sp())
+  def _make(self, num_safety_configs: int = 1):
+    return AutoBrakeHoldCarController(make_car_params(num_safety_configs), make_car_params_sp())
 
   def test_enabled_reflects_flag(self, mock_create):
     for value in range(256):
       with self.subTest(flags=value):
         cp_sp = structs.CarParamsSP()
         cp_sp.flags = value
-        ctrl = AutoBrakeHoldCarController(structs.CarParams(), cp_sp)
+        ctrl = AutoBrakeHoldCarController(make_car_params(), cp_sp)
         self.assertEqual(ctrl.enabled, bool(value & ToyotaFlagsSP.SP_AUTO_BRAKE_HOLD))
 
   def test_does_not_engage_before_timer(self, mock_create):
@@ -171,6 +177,14 @@ class TestAutoBrakeHoldCarController(unittest.TestCase):
     ctrl.update(cs, frame, None)
     override_arg = mock_create.call_args.args[-1]
     self.assertTrue(override_arg)
+
+  def test_uses_can_bus_pt(self, mock_create):
+    for num_safety_configs, expected_bus in ((1, 0), (2, 4)):
+      with self.subTest(num_safety_configs=num_safety_configs):
+        ctrl = self._make(num_safety_configs=num_safety_configs)
+        cs = FakeCarState(brake_pressed=False)
+        ctrl.update(cs, 0, None)
+        self.assertEqual(mock_create.call_args.args[4], expected_bus)
 
   def test_message_only_built_every_other_frame(self, mock_create):
     ctrl = self._make()

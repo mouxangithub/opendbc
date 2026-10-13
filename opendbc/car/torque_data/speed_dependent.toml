@@ -1,0 +1,55 @@
+# Per-platform speed-binned torque parameters learned from comma 4 data. Breakpoints are
+# bin centers in m/s. LAF and friction seed per-bin SVD fits and their +/-30% sanity bounds.
+# Learned bins persist across boots. Increment seed_version when new seeds must invalidate
+# existing caches and restart learning; an omitted version is zero.
+
+[MAZDA_CX5_2022]
+# One CX-5 2022's learned values (2026-09-29), converted to the flat 1200-count STEER_MAX with
+# the same counts on the wire; 34.5 and 37 m/s take that table's values there. Friction up to
+# 28 m/s was refit on 2026-10-01 from that car's own bins, learned on 1200 with the per-bin
+# freeze fixed. On 2026-10-04 the six bins through 28 m/s took that car's filtered learned
+# values. Version 2 retires the stepped-scale caches; both refits are on the same scale, so they
+# keep them. Provenance and fits: docs/zoompilot/lateral-tune.md, "Seeds".
+speed_bp    = [6.5, 9.5, 12.0, 16.4, 21.0, 28.0, 34.5, 37.0]
+laf_bp      = [2.37, 2.63, 2.13, 1.74, 1.85, 2.27, 2.54, 2.56]
+friction_bp = [0.201, 0.145, 0.135, 0.134, 0.104, 0.084, 0.071, 0.070]
+seed_version = 2
+
+[MAZDA_CX9_2021]
+# Learned on a CX-9 with a CX-5 2022 donor EPS; the stock EPS keeps the 45 kph steering floor
+# and receives only the bins above it. Measured from this car's LiveTorqueParameters cache on
+# 2026-08-25 (the unlearned 35 m/s LAF extrapolated from the CX-9/CX-5 highway offset). The
+# bins from 16.4 m/s up were learned at 800 counts and are converted to the 1200-count
+# STEER_MAX exactly (LAF x 1.5, friction / 1.5): no CX-9 drive above 32 mph exists to refit
+# them. Version 1 retires the caches learned on the old scale.
+speed_bp    = [6.5, 9.5, 12.0, 16.4, 21.0, 28.0, 35.0]
+laf_bp      = [2.67, 2.70, 2.56, 2.30, 1.92, 2.58, 2.96]
+friction_bp = [0.161, 0.154, 0.116, 0.109, 0.091, 0.085, 0.072]
+seed_version = 1
+
+[MAZDA_CX8_2023]
+# The CX-9 2021 seeds stand in until a CX-8 has learned its own.
+substitute = "MAZDA_CX9_2021"
+
+# Chassis behind a CX-5 2022 donor EPS: the KE, and any the engine-firmware swap fallback
+# names. They take the CX-5 2022 table, learned behind that EPS, until one learns its own; the
+# stock EPS on each keeps the steering floor and gets none.
+[MAZDA_CX5_KE]
+substitute = "MAZDA_CX5_2022"
+requires_steer_to_zero = true
+
+[MAZDA_CX5]
+substitute = "MAZDA_CX5_2022"
+requires_steer_to_zero = true
+
+[MAZDA_CX9]
+substitute = "MAZDA_CX5_2022"
+requires_steer_to_zero = true
+
+[MAZDA_3]
+substitute = "MAZDA_CX5_2022"
+requires_steer_to_zero = true
+
+[MAZDA_6]
+substitute = "MAZDA_CX5_2022"
+requires_steer_to_zero = true

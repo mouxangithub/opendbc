@@ -8,6 +8,7 @@ See the LICENSE.md file in the root directory for more details.
 from opendbc.car import structs
 from opendbc.car.can_definitions import CanData
 from opendbc.car.toyota import toyotacan
+from opendbc.car.toyota.values import CanBus
 from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP
 
 LEFT_BLINDSPOT = b"\x41"
@@ -79,8 +80,9 @@ class EnhancedBsmCarState(EnhancedBsm):
 
 
 class _BsmSideController:
-  def __init__(self, addr_byte: bytes):
+  def __init__(self, addr_byte: bytes, bus: int):
     self.addr_byte = addr_byte
+    self.bus = bus
     self.debug_enabled = False
     self.last_poll_frame = 0
 
@@ -89,7 +91,7 @@ class _BsmSideController:
 
     if not self.debug_enabled:
       if always_on or vego_ok:  # eagle eye camera will stop working if bsm is switched on under 6m/s
-        can_sends.append(toyotacan.create_set_bsm_debug_mode(self.addr_byte, True))
+        can_sends.append(toyotacan.create_set_bsm_debug_mode(self.addr_byte, True, self.bus))
         self.debug_enabled = True
         self.last_poll_frame = frame  # give the poll loop a fresh baseline so the stale-poll disable check below can't fire before the first real poll
     else:
@@ -98,11 +100,11 @@ class _BsmSideController:
       # real route - two reasserts landed inside an 8s window where the ECU went silent on that side).
       # send it once and leave it alone, matching the original, proven-stable behavior.
       if not always_on and frame - self.last_poll_frame > 50:
-        can_sends.append(toyotacan.create_set_bsm_debug_mode(self.addr_byte, False))
+        can_sends.append(toyotacan.create_set_bsm_debug_mode(self.addr_byte, False, self.bus))
         self.debug_enabled = False
 
       if frame % e_bsm_rate == poll_phase:
-        can_sends.append(toyotacan.create_bsm_polling_status(self.addr_byte))
+        can_sends.append(toyotacan.create_bsm_polling_status(self.addr_byte, self.bus))
         self.last_poll_frame = frame
 
     return can_sends
@@ -113,8 +115,9 @@ class EnhancedBsmCarController(EnhancedBsm):
   def __init__(self, CP: structs.CarParams, CP_SP: structs.CarParamsSP):
     super().__init__(CP, CP_SP)
 
-    self._left = _BsmSideController(LEFT_BLINDSPOT)
-    self._right = _BsmSideController(RIGHT_BLINDSPOT)
+    self.CAN = CanBus(CP)
+    self._left = _BsmSideController(LEFT_BLINDSPOT, self.CAN.pt)
+    self._right = _BsmSideController(RIGHT_BLINDSPOT, self.CAN.pt)
 
   def update(self, CS: structs.CarState, frame: int, e_bsm_rate: int = 20, always_on: bool = True) -> list[CanData]:
     if frame <= 200:

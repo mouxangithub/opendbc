@@ -68,6 +68,8 @@ void set_alternative_experience(int mode);
 int get_alternative_experience(void);
 void set_relay_malfunction(bool c);
 bool get_relay_malfunction(void);
+void set_safety_mode_cnt(uint32_t c);
+bool get_safety_rx_checks_invalid(void);
 bool get_gas_pressed_prev(void);
 void set_gas_pressed_prev(bool);
 bool get_brake_pressed_prev(void);

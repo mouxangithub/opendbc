@@ -408,6 +408,30 @@ class MadsSafetyTestBase(unittest.TestCase):
     self.assertTrue(self.safety.get_controls_allowed_lateral(),
                     "Counter should have reset; 2 mismatches after reset should not disengage")
 
+  def test_heartbeat_engaged_mads_reengage_starts_the_count_over(self):
+    """A heartbeat exit leaves the count at the threshold. Lateral the MADS button allows
+    again must survive a check that comes before openpilot's heartbeat says MADS is on:
+    a stale count ended it 30 ms later on a Honda Clarity, and openpilot steered into
+    blocked messages and a controls mismatch (2026-10-06)."""
+    try:
+      self._lkas_button_msg(False)
+    except NotImplementedError as err:
+      raise unittest.SkipTest("Skipping test because MADS button is not supported") from err
+
+    self.safety.set_mads_params(True, False, False)
+    self.safety.set_controls_allowed_lateral(True)
+    self.safety.set_heartbeat_engaged_mads(False)
+    for _ in range(3):
+      self.safety.mads_heartbeat_engaged_check()
+    self.assertFalse(self.safety.get_controls_allowed_lateral())
+
+    self._rx(self._lkas_button_msg(True))
+    self._rx(self._lkas_button_msg(False))
+    self.assertTrue(self.safety.get_controls_allowed_lateral())
+    # the heartbeat still says off: one check is a first mismatch, not a fourth
+    self.safety.mads_heartbeat_engaged_check()
+    self.assertTrue(self.safety.get_controls_allowed_lateral(), "a stale mismatch count ended a fresh engagement")
+
   def test_mads_button_not_engaged_without_press(self):
     """Test that MADS button in idle state does not engage lateral control"""
     try:
