@@ -14,9 +14,11 @@ from opendbc.car import Bus, DT_CTRL
 from opendbc.car import structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.mazda import mazdacan
-from opendbc.car.mazda.carstate import ButtonType, CAM_LANEINFO_FRESH_FRAMES, LKAS_REARM_FRAMES, LKAS_REARM_FAULT_FRAMES, MAIN_OFF_DEBOUNCE_SAMPLES
+from opendbc.car.mazda.carstate import ButtonType, LKAS_REARM_FRAMES, LKAS_REARM_FAULT_FRAMES
 from opendbc.car.mazda.tests.conftest import car_interface, car_params, car_params_sp, packer
 from opendbc.car.mazda.values import CAR, CarControllerParams
+
+MAIN_OFF_DEBOUNCE_SAMPLES = CarControllerParams.MAIN_OFF_DEBOUNCE_SAMPLES
 from opendbc.sunnypilot.car.mazda.values import MazdaFlagsSP
 
 CAM_LANEINFO = 0x440
@@ -35,8 +37,8 @@ SETTLED = bytes([0x42, 0b00000001, 0, 0, 0, 0, 0, 0])       # markers clear: set
 BIT2_LATCHED = bytes([0x41, 0b00100001, 0, 0, 0, 0, 0, 0])  # BIT2 (HBC armed) high for a whole cycle
 FAULTED = bytes([0x42, 0b00000001, 0, 0, 0, 0x01, 0, 0])    # ERR_BIT (bit 40) set
 
-# Exercise CAM_LANEINFO at its longest measured period so freshness tests match the bus cadence.
-CAM_LANEINFO_PERIOD_FRAMES = int(CarControllerParams.CAM_LANEINFO_PERIOD_T / DT_CTRL)
+# Exercise CAM_LANEINFO at its longest measured period, 0.563 s, so freshness tests match the bus cadence.
+CAM_LANEINFO_PERIOD_FRAMES = int(0.563 / DT_CTRL)
 
 SETTLE_T = CarControllerParams.FSC_SETTLE_T
 GUARD_T = CarControllerParams.STOCK_RADAR_GUARD_T
@@ -219,7 +221,7 @@ def feed_guard(CI, secs, radar_alive, start_frame=0, acc_active=False):
   pk = packer()
   ret = None
   n = int(secs / DT_CTRL)
-  CI.CS.radar_control_active = not radar_alive  # ownership supplied by the controller in production
+  CI.CC.radar_session.control_active = not radar_alive  # the controller's claim, from its session in production
   for i in range(start_frame, start_frame + n):
     msgs = [pk.make_can_msg("PEDALS", 0, {"ACC_OFF": 0 if acc_active else 1, "ACC_ACTIVE": 1 if acc_active else 0})]
     msgs.append(pk.make_can_msg("ENGINE_DATA", 0, {"SPEED": 0}))
@@ -395,7 +397,7 @@ class TestNavSpeedLimit:
 
 class TestMainOffDebounce:
   """Under alpha long, main is PEDALS arming, debounced off: both bits low for
-  MAIN_OFF_DEBOUNCE_T of samples is a main-off, brake or no brake. It replaces a brake-hold that
+  MAIN_OFF_DEBOUNCE_SAMPLES samples is a main-off, brake or no brake. It replaces a brake-hold that
   let a both-low run under braking land only inside a button's context, which missed a cancel
   mashed under braking (route 7f9e3ff336 t+484-488), the KE's MODE_X main-off at a stop
   (route_ke_0b seg 3), and a main-off with no visible button (000001f0--b507914e9e seg 0 t+10.69).
@@ -405,7 +407,7 @@ class TestMainOffDebounce:
   def armed_and_silent(CI):
     # get past the two-master guard with the main armed so availability starts True
     pk = packer()
-    CI.CS.radar_control_active = True
+    CI.CC.radar_session.control_active = True
     n = int((GUARD_T + 0.5) / DT_CTRL)
     for i in range(n):
       ret, _ = feed(CI, i, pk.make_can_msg("PEDALS", 0, {"ACC_OFF": 1}), pk.make_can_msg("ENGINE_DATA", 0, {"SPEED": 0}))
@@ -504,28 +506,14 @@ class UndeliveredRig:
     self.packer = packer()
     self.frame = 0
 
-  def step(self, request, effective, blocked, speed_kph=40., driver_torque=0, track_state=0, fault=0):
+  def step(self, request, effective, blocked, speed_kph=40., driver_torque=0, track_state=0):
     self.frame += 1
     ret, _ = feed(self.CI, self.frame,
                   self.packer.make_can_msg("STEER_RATE", 0, {"LKAS_REQUEST": request, "LKAS_EFFECTIVE": effective, "LKAS_BLOCK": blocked,
-                                                             "LKAS_TRACK_STATE": track_state, "LKAS_FAULT": fault}),
+                                                             "LKAS_TRACK_STATE": track_state}),
                   self.packer.make_can_msg("WHEEL_SPEEDS", 0, {"FL": speed_kph, "FR": speed_kph, "RL": speed_kph, "RR": speed_kph}),
                   self.packer.make_can_msg("STEER_TORQUE", 0, {"STEER_TORQUE_SENSOR": driver_torque}))
     return ret
-
-
-class TestLkasFaultBit:
-  """STEER_RATE bit 53: the EPS raises it about 0.6 s after its 0x243 stream stops and the camera's
-  ERR_BIT_1 follows 5.25 to 5.55 s later on every capture (11 of 11 with a known onset over 64 h);
-  neither clears before the next ignition cycle."""
-
-  def test_the_bit_is_decoded_but_the_camera_still_owns_the_fault(self):
-    rig = UndeliveredRig()
-    rig.step(0, 0, 1, track_state=0)
-    assert not rig.CS.lkas_fault
-    ret = rig.step(0, 0, 1, track_state=0, fault=1)
-    assert rig.CS.lkas_fault
-    assert not ret.steerFaultPermanent  # the camera's ERR_BIT_1 reports it, as before
 
 
 class TestRejectionReport:
@@ -761,32 +749,6 @@ class TestTjaButtonEvents:
     self._btns(CI, pk, 0, MODE_X=0, MODE_Y=0)
     ret = self._btns(CI, pk, 1, MODE_X=mode_x, MODE_Y=mode_y)
     assert [be.type for be in ret.buttonEvents] == [self.ButtonType.mainCruise]
-
-
-class TestStockTja:
-  """The camera's own TJA/CTS state, read live off its 0x440 for the controller's camera press:
-  0 off, 2 armed, 3 to 5 steering. Never latched (the camera drops its own arm, route 00000018
-  seg 9), and 0 once the camera goes stale."""
-
-  def step(self, CI, pk, i, tja):
-    ret, _ = feed(CI, i, pk.make_can_msg("CAM_LANEINFO", 2, {"TJA": tja, "LANE_LINES": 3}))
-    return ret
-
-  def test_follows_the_camera_frame_by_frame(self):
-    CI, pk = car_interface(alpha_long=False), packer()
-    for i, tja in enumerate([0, 2, 2, 4, 3, 0, 2, 0]):
-      self.step(CI, pk, i, tja)
-      assert CI.CS.stock_tja == tja
-
-  def test_stale_camera_reads_off(self):
-    CI, pk = car_interface(alpha_long=False), packer()
-    self.step(CI, pk, 0, 4)
-    assert CI.CS.stock_tja == 4
-    for i in range(1, CAM_LANEINFO_FRESH_FRAMES):
-      CI.update([(t_ns(i), [])])
-      assert CI.CS.stock_tja == 4
-    CI.update([(t_ns(CAM_LANEINFO_FRESH_FRAMES), [])])
-    assert CI.CS.stock_tja == 0
 
 
 class TestFirstEngageHold:

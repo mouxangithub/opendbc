@@ -18,7 +18,6 @@ from opendbc.car.toyota.values import ToyotaSafetyFlags
 from opendbc.sunnypilot.car.hyundai.enable_radar_tracks import enable_radar_tracks as hyundai_enable_radar_tracks
 from opendbc.sunnypilot.car.hyundai.longitudinal.helpers import LongitudinalTuningType
 from opendbc.sunnypilot.car.hyundai.values import HyundaiFlagsSP
-from opendbc.car.mazda.values import MazdaFlags
 from opendbc.sunnypilot.car.mazda.values import MazdaFlagsSP, MazdaSafetyFlagsSP
 from opendbc.sunnypilot.car.subaru.values_ext import SubaruFlagsSP, SubaruSafetyFlagsSP
 from opendbc.sunnypilot.car.tesla.values import MadsScreenButtonType, TeslaFlagsSP, TeslaSafetyFlagsSP
@@ -178,8 +177,3 @@ def _initialize_mazda(CP: structs.CarParams, CP_SP: structs.CarParamsSP, params_
     if int(params_dict.get("MazdaTjaButton", 0)) == 1:
       CP_SP.flags |= MazdaFlagsSP.TJA_BUTTON.value
       CP_SP.safetyParam |= MazdaSafetyFlagsSP.TJA_BUTTON
-    # A developer's declaration, off by default: the radar takeover may be requested while the
-    # car is moving (a fresh session after a forced-offroad exit or a process restart). No
-    # radar has a moving handover on record yet; when one does, this becomes a firmware rule.
-    if CP.openpilotLongitudinalControl and int(params_dict.get("MazdaMovingTakeover", 0)) == 1:
-      CP.flags |= MazdaFlags.MOVING_TAKEOVER.value

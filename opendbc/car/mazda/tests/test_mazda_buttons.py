@@ -10,8 +10,7 @@ carve-out while the stock radar still owns the bus.
 import pytest
 
 from opendbc.car.mazda.carcontroller import CANCEL_SETTLE_FRAMES
-from opendbc.car.mazda.longitudinal import RELEASE_DEBOUNCE_FRAMES
-from opendbc.car.mazda.tests.conftest import CRZ_BTNS, LongCtrlState, addrs, car_control, step, step_long
+from opendbc.car.mazda.tests.conftest import CRZ_BTNS, LongCtrlState, addrs, car_control, step
 
 
 class TestResumeButton:
@@ -28,20 +27,6 @@ class TestResumeButton:
     # stock ACC owns the hold there, and the button is the only lever openpilot has on it
     assert stock_cc.resume_requested(car_control(accel=0.3, resume=True))
     assert not stock_cc.resume_requested(car_control(accel=0.3, resume=False))
-
-  def test_body_latched_hold_releases_in_protocol(self, cc, cs):
-    # the release the button used to stand in for: stop bits already relaxed to the body, then
-    # the plan asks to move and the unlatch pulse fires with the release
-    for _ in range(200):
-      step_long(cc, cs, long_state=LongCtrlState.stopping, accel=-1.024, standstill=True, cruise_engaged=True, body_hold=True)
-    assert cc.stop_and_go.holding and cc.stop_and_go.car_has_hold
-    assert not cc.stop_and_go.stop_bits  # body owns the brakes, stock relaxes here
-
-    for _ in range(RELEASE_DEBOUNCE_FRAMES):
-      sends = step_long(cc, cs, accel=0.3, standstill=True, cruise_engaged=True, body_hold=True)
-      assert CRZ_BTNS not in addrs(sends), "CRZ_BTNS written at the release"
-    assert not cc.stop_and_go.holding
-    assert cc.stop_and_go.resume_unlatching, "the pulse must fire with the release"
 
 
 def cancel_kwargs(**over):

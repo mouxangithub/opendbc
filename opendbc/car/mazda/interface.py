@@ -17,6 +17,11 @@ class CarInterface(CarInterfaceBase):
   CarController = CarController
   RadarInterface = RadarInterface
 
+  def __init__(self, CP, CP_SP):
+    CarInterfaceBase.__init__(self, CP, CP_SP)
+    # The controller runs the radar session; carstate reads its outcome on the next update.
+    self.CS.radar_session = self.CC.radar_session
+
   @staticmethod
   def configure_torque_tune(candidate, tune, steering_angle_deadzone_deg=0.0):
     # params.toml's tunes are on upstream's STEER_MAX. An override rather than a conversion in
@@ -46,15 +51,14 @@ class CarInterface(CarInterfaceBase):
     # fingerprint on an unlisted older EPS then gets the floor and its banner, not a silent latch.
     eps_fw = {fw.fwVersion for fw in car_fw if fw.ecu == 'eps'}
     steer_to_zero = not eps_fw.isdisjoint(STEER_TO_ZERO_EPS_FW) or (not eps_fw and candidate in STEER_TO_ZERO_PLATFORMS)
+    # The panda enforces the measured envelope the controller runs on every gen1 EPS.
+    ret.safetyConfigs[0].safetyParam |= MazdaSafetyFlags.EPS_HW.value
     if steer_to_zero:
-      # Select panda's matching torque envelope from the detected EPS.
       ret.flags |= MazdaFlags.STEER_TO_ZERO_EPS.value
-      ret.safetyConfigs[0].safetyParam |= MazdaSafetyFlags.STEER_TO_ZERO_EPS.value
     else:
       # Same envelope and tune; only the firmware's floor, latch semantics and alpha long differ.
       ret.minSteerSpeed = LKAS_LIMITS.DISABLE_SPEED * CV.KPH_TO_MS
       ret.flags |= MazdaFlags.LEGACY_FW_EPS.value
-      ret.safetyConfigs[0].safetyParam |= MazdaSafetyFlags.LEGACY_FW_EPS.value
 
     # Alpha-long silences the radar and stands in for it, so it needs the radar's dialect,
     # not its tracks: offer it wherever the platform's radar speaks the 2022 family dialect
@@ -107,21 +111,14 @@ class CarInterface(CarInterfaceBase):
     return ret
 
   def update(self, can_packets):
-    """Latch the camera's last CAM_LANEINFO payload and staleness for the white-wheel HUD gate."""
+    """Latch the camera's last CAM_LANEINFO payload and staleness: carstate's freshness and the white-wheel HUD gate."""
     # card sends [(t, frames), ...]; the model tests send one bare (t, frames) tuple. CANParser.update takes both.
     if can_packets and not isinstance(can_packets[0], (list, tuple)):
       can_packets = [can_packets]
     raw, received = self.CS.cam_laneinfo_raw, False
     for _t, frames in can_packets:
-      if not frames:
-        continue
-      # tests pass CanData objects; card passes plain (addr, dat, src) tuples
-      if hasattr(frames[0], "address"):
-        hits = [(m.dat, m.src) for m in frames if m.address == 0x440]
-      else:
-        hits = [(m[1], m[2]) for m in frames if m[0] == 0x440]
-      for dat, src in hits:
-        if src == 2 and len(dat) == 8:
+      for addr, dat, src in frames:
+        if addr == 0x440 and src == 2 and len(dat) == 8:
           raw, received = bytes(dat), True
     self.CS.cam_laneinfo_raw = raw
     self.CS.cam_laneinfo_stale_frames = 0 if received else self.CS.cam_laneinfo_stale_frames + 1

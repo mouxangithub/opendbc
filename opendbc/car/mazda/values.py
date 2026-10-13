@@ -15,16 +15,18 @@ Ecu = CarParams.Ecu
 # Steer torque limits
 
 class CarControllerParams:
+  # The measured EPS envelope, mazda.h's MAZDA_EPS_HW_STEERING_LIMITS: the panda's safety tests take
+  # their numbers from here. Evidence for every constant below: the Constants tables in
+  # docs/zoompilot/mazda-lateral.md and mazda-longitudinal.md.
+  EPS_STEER_MAX = 1200            # theoretical max_steer 2047
+  STEER_DELTA_UP = 12             # torque increase per refresh, the EPS's own slew
+  STEER_DELTA_DOWN = 12           # torque decrease per refresh
   STEER_DRIVER_ALLOWANCE = 15     # allowed driver torque before start limiting
+  STEER_DRIVER_MULTIPLIER = 15    # weight driver torque, tuned for the 2022 EPS
   STEER_DRIVER_FACTOR = 1         # from dbc
-  # Keep steering deltas synchronized with this 100 Hz control rate.
-  STEER_STEP = 1
-
-  # The measured envelope's full scale, equal to the panda's max_torque for it.
-  EPS_STEER_MAX = 1200  # theoretical max_steer 2047
-  # Upstream's STEER_MAX: the scale params.toml's Mazda tunes, sunnypilot's NNLC models and the
-  # manual torque override are expressed on. Every steering Mazda runs the envelope, so one
-  # ratio converts them (latAccelFactor x TUNE_SCALE, friction / TUNE_SCALE).
+  STEER_STEP = 1  # 100 Hz
+  # Upstream's STEER_MAX, the scale params.toml's tunes, NNLC models and the manual torque override
+  # use: latAccelFactor x TUNE_SCALE, friction / TUNE_SCALE.
   TUNE_STEER_MAX = 800
   TUNE_SCALE = EPS_STEER_MAX / TUNE_STEER_MAX
 
@@ -34,42 +36,19 @@ class CarControllerParams:
   # Longitudinal message periods in 100 Hz control frames.
   LONG_STEP = 2        # CRZ_INFO/CRZ_CTRL at 50 Hz, matching stock
   RADAR_STEP = 10      # radar static + track frames at 10 Hz
-  RADAR_UDS_STEP = 50  # radar UDS traffic at 2 Hz: session control or tester present
 
-  # Wait for the camera's cold-boot radar check before silencing the radar.
-  FSC_SETTLE_T = 7.0           # observed-settled time before the teardown may start (check passed from 5.8 s)
-  # This alive window detects a normal CRZ_INFO gap but does not establish ownership.
-  STOCK_RADAR_ALIVE_T = 0.05
-  # Sustained radar silence before ownership is trusted (cruise; the main switch is not gated):
-  # about 12x the longest stock CRZ_INFO gap observed, the value every engaged drive ran on.
-  STOCK_RADAR_GUARD_T = 1.27
-  RADAR_SESSION_LIMIT_T = 10.0  # per-attempt UDS budget
-  # CAM_LANEINFO runs near 2 Hz, so its freshness window must exceed one period.
-  CAM_LANEINFO_PERIOD_T = 0.563
-  CAM_LANEINFO_FRESH_T = 1.5
+  FSC_SETTLE_T = 7.0           # the camera's cold-boot radar check settled before the teardown may start
+  STOCK_RADAR_ALIVE_T = 0.05   # a normal CRZ_INFO gap; it does not establish ownership
+  STOCK_RADAR_GUARD_T = 1.27   # silence before ownership is trusted, ~12x the longest stock gap
+  CAM_LANEINFO_FRESH_T = 1.5   # longer than one ~2 Hz CAM_LANEINFO period
 
-  # The car's lane keep back on, the EPS re-arms: LKAS_BLOCK with TRACK_STATE for 3.00 to 3.08 s
-  # from the edge whatever it is sent, then torque 0.02 to 0.38 s later (7 edges: routes
-  # 0000024d, 00000105, and the camera's ERR recovery on 00000043).
+  # The car's lane keep back on, the EPS holds LKAS_BLOCK for ~3 s whatever it is sent.
   LKAS_REARM_T = 3.0           # no lift of the block counts before this
   LKAS_REARM_FAULT_T = 4.0     # the block it raises is not a fault for this long
 
-  # Stock body-latched releases use a nine-frame RESUME_UNLATCHING pulse.
-  RESUME_UNLATCH_LATCHED_T = 0.18  # s, 9 wire frames, the latched-family mode
-  # Retry one unanswered body-latched release, then return control to the plan.
-  RESUME_REPULSE_T = 1.0  # s after a latched release, the body still holding
-
-  MAIN_OFF_DEBOUNCE_T = 0.1   # both PEDALS cruise bits low this long is a main-off; no transient dropout in 4026 segments
+  # Both PEDALS cruise bits low this many samples (100 Hz) is a main-off; mazda.h's MAZDA_MAIN_OFF_DEBOUNCE.
+  MAIN_OFF_DEBOUNCE_SAMPLES = 10
   CANCEL_SETTLE_T = 0.2       # s a cancel request must hold before the first press; the car answers its own inside it
-
-  # Debounce movement requests before releasing a standstill hold.
-  RELEASE_DEBOUNCE_T = 0.2
-  # A plan must ask for more than this to open a hold: the e2e model drifts up to +0.19 at a stop
-  # before its shouldStop lands, and every logged drive-off passes 0.25 within 1.1 s.
-  RELEASE_ACCEL = 0.25  # m/s^2
-
-  # Debounce lead visibility before advertising a radar track.
-  LEAD_DEBOUNCE_T = 0.5
 
   # Relax the command after the body ECU takes ownership of the brake hold.
   ACCEL_HOLD_LATCHED = -0.001  # m/s2
@@ -83,71 +62,45 @@ class CarControllerParams:
 
   # Permit a bounded breakaway ramp because Mazda longitudinal control has no integrator.
   ACCEL_BREAKAWAY_MAX = 1.45  # m/s2, ceiling for the still-stopped release ramp
-  ACCEL_BREAKAWAY_T = 3.0  # s
   ACCEL_BREAKAWAY_OVERSHOOT = 0.75  # m/s2 above the plan the still-stopped ramp may climb
 
-  # Shape positive commands like stock MRCC (tools/mazda_long/accel_profile.py, 158 stock routes).
-  # Stock never asks for more than these by speed (p99 of the accelerating command, no lead).
+  # Shape positive commands like stock MRCC: its accelerating command's ceiling by speed, and its
+  # build rate (taken a third quicker once rolling: the plan sees a lead pull away before the radar
+  # would). Positive commands only, so braking is never held longer than the plan asks.
   ACCEL_CEILING_BP = [0., 4., 9., 14., 18., 25.]  # m/s
   ACCEL_CEILING_V = [1.5, 1.75, 1.45, 1.05, 0.85, 0.65]  # m/s2
-  # Stock builds positive accel at +12 raw per 50 Hz frame (0.6 m/s3) once rolling, 99.3% of
-  # rising frames, and at its 1.25 m/s3 release ramp while pulling away. The plan steps faster
-  # than both, which is the driver-felt harshness. Rolling builds a third quicker than stock on
-  # purpose: the plan sees a lead pull away before the stock radar walk would. Applies above
-  # zero only: brake release keeps the looser windup below so braking is never held longer
-  # than the plan asks.
   ACCEL_BUILD_BP = [3., 6.]   # m/s
   ACCEL_BUILD_V = [1.25, 0.8]  # m/s3
-  # Stock lifts the throttle at no more than 40 raw per 50 Hz frame (2.0 m/s3) in 99.98% of
-  # falling positive frames. Applies to throttle modulation only (plan still >= 0); a plan
-  # asking for brake falls through to the winddown limit so braking is never delayed.
+  # Stock's throttle lift rate, while the plan is still >= 0; a brake request skips it.
   ACCEL_LIFT_LIMIT = -2.0  # m/s3
   # Limit upward plan-command slew in the brake region without delaying braking response.
   ACCEL_WINDUP_LIMIT = 4.0 * DT_CTRL     # m/s2 per frame
   ACCEL_WINDDOWN_LIMIT = -10.0 * DT_CTRL  # m/s2 per frame, clips only the p99.9+ steps
 
   def __init__(self, CP):
-    # Every gen1 Mazda EPS runs the measured envelope; the interface sets one of the two bits.
-    if CP.flags & MazdaFlags.EPS_HW:
-      # Match the EPS hardware slew and panda safety limits in both directions.
-      self.STEER_DELTA_UP = 12
-      self.STEER_DELTA_DOWN = 12
-      self.STEER_DRIVER_MULTIPLIER = 15   # tuned for the CX-5 EPS response
-      # Use a sample window and margin to stay inside panda's fresher driver-torque envelope.
-      self.STEER_DRIVER_SAMPLES = 10
-      self.STEER_DRIVER_MARGIN = 2
+    # Use a sample window and margin to stay inside panda's fresher driver-torque envelope.
+    self.STEER_DRIVER_SAMPLES = 10
+    self.STEER_DRIVER_MARGIN = 2
 
-      # STEER_MAX scales normalized torque into counts at every speed; EPS_CEILING_LOOKUP is the
-      # applied limit. The EPS is linear in counts, so one scale keeps the learned torque
-      # parameters in one unit (docs/zoompilot/lateral-tune.md).
-      self.STEER_MAX = self.EPS_STEER_MAX
-      # Clamp to the measured applied-torque ceiling so controlsd can detect saturation.
-      self.EPS_CEILING_LOOKUP = ([8.0, 8.5, 9.4, 10.3, 11.2, 12.1, 13.0, 13.9, 14.5],
-                                 [1148, 1132, 1092, 1048, 1012,  920,  808,  676,  620])
+    # One scale at every speed keeps the learned torque parameters in one unit (docs/zoompilot/lateral-tune.md).
+    self.STEER_MAX = self.EPS_STEER_MAX
+    # Clamp to the measured applied-torque ceiling so controlsd can detect saturation.
+    self.EPS_CEILING_LOOKUP = ([8.0, 8.5, 9.4, 10.3, 11.2, 12.1, 13.0, 13.9, 14.5],
+                               [1148, 1132, 1092, 1048, 1012,  920,  808,  676,  620])
 
-      if CP.flags & MazdaFlags.STEER_TO_ZERO_EPS:
-        # Stop commanding after sustained zero delivery to avoid a camera steering fault. Use
-        # LKAS_EFFECTIVE because LKAS_BLOCK may still permit partial delivery.
-        self.STEER_UNDELIVERED_MIN = 200      # counts; below this the EPS rounds to zero anyway
-        self.STEER_UNDELIVERED_FRAMES = 20    # 200 ms at 100 Hz
+    if CP.flags & MazdaFlags.STEER_TO_ZERO_EPS:
+      # Stop commanding after sustained zero delivery to avoid a camera steering fault. Use
+      # LKAS_EFFECTIVE because LKAS_BLOCK may still permit partial delivery.
+      self.STEER_UNDELIVERED_MIN = 200      # counts; below this the EPS rounds to zero anyway
+      self.STEER_UNDELIVERED_FRAMES = 20    # 200 ms at 100 Hz
 
-        # Alert only after sustained non-delivery above maneuvering speed. Suppress normal
-        # low-speed standby blocks identified by LKAS_TRACK_STATE.
-        self.STEER_UNDELIVERED_ALERT_FRAMES = 80    # 0.8 s at 100 Hz, on top of the latch's 0.2
-        self.STEER_UNDELIVERED_ALERT_MIN_SPEED = 12. * CV.MPH_TO_MS
-        # A block that began below this speed is the EPS's standby from a stop, whatever
-        # LKAS_TRACK_STATE says later in it; only a block that began rolling can be a dropout.
-        # The same boundary gates the first-engagement hold in carstate: on the EPS's first
-        # engagement of the cycle it delivered nothing under standby below it on any start on
-        # record, and faulted on 3 of 13 (docs/zoompilot/mazda-lateral.md, first-activation hold).
-        self.STEER_UNDELIVERED_ALERT_ORIGIN_SPEED = 1.0  # m/s
-    else:
-      # Upstream's envelope. The interface no longer selects it for any Mazda; the panda keeps
-      # it as the no-param default, so flags == 0 must still build.
-      self.STEER_MAX = self.TUNE_STEER_MAX
-      self.STEER_DELTA_UP = 10
-      self.STEER_DELTA_DOWN = 25
-      self.STEER_DRIVER_MULTIPLIER = 1    # upstream stock
+      # Alert only after sustained non-delivery above maneuvering speed. Suppress normal
+      # low-speed standby blocks identified by LKAS_TRACK_STATE.
+      self.STEER_UNDELIVERED_ALERT_FRAMES = 80    # 0.8 s at 100 Hz, on top of the latch's 0.2
+      self.STEER_UNDELIVERED_ALERT_MIN_SPEED = 12. * CV.MPH_TO_MS
+      # A block that began below this speed is the EPS's standby from a stop; only one that began
+      # rolling can be a dropout. carstate's first-engagement hold uses the same boundary.
+      self.STEER_UNDELIVERED_ALERT_ORIGIN_SPEED = 1.0  # m/s
 
 
 @dataclass
@@ -181,18 +134,14 @@ class MazdaFlags(IntFlag):
 
   # The G46L radar's dialect bit; see G46L_RADAR_FW below.
   G46L_RADAR = 8
-  # The radar may be taken over while the car is moving: the developer's MazdaMovingTakeover
-  # param (opendbc/sunnypilot/car/interfaces.py), until a moving handover is on record for a
-  # radar firmware and this can become a fingerprint rule.
-  MOVING_TAKEOVER = 16
 
 
 class MazdaSafetyFlags(IntFlag):
   LONG = 1
-  # Selects the steer-to-zero EPS envelope in panda safety.
-  STEER_TO_ZERO_EPS = 2
-  # Selects the same envelope for legacy firmware; a distinct bit so logs show the firmware.
-  LEGACY_FW_EPS = 4
+  # Selects the measured EPS envelope in panda safety; the interface sets it on every gen1 EPS.
+  # 4 was the legacy-firmware copy of this bit until 2026-10: do not reuse it, an older car side
+  # may still send it.
+  EPS_HW = 2
 
 
 class WMI(StrEnum):
@@ -251,14 +200,13 @@ class CAR(Platforms):
   )
   MAZDA_CX5_2022 = MazdaPlatformConfig(
     [MazdaCarDocs("Mazda CX-5 2022-25")],
-    MazdaCX5_2022CarSpecs(mass=3728 * CV.LB_TO_KG, wheelbase=2.698, steerRatio=18.1),  # 15.5 is factory spec; 18.1 from paramsd learner (2.9M samples)
+    MazdaCX5_2022CarSpecs(mass=3728 * CV.LB_TO_KG, wheelbase=2.698, steerRatio=18.1),  # learned; factory spec 15.5
     wmis={WMI.JAPAN_CROSSOVER, WMI.EXPORT_CROSSOVER}, chassis_codes={'KF'}, years={'N', 'P', 'R', 'S'},  # 2022-25
   )
   MAZDA_CX8_2023 = MazdaPlatformConfig(
     [MazdaCarDocs("Mazda CX-8 2023")],
-    # Three-row CX-5 derivative on the CX-9 wheelbase (chassis KG), sold in Japan and Australia; the CX-9
-    # specs stand in until a learned set exists. Japan-market cars carry a chassis number, not a VIN,
-    # and Australian JM0 VINs have no model-year field, so it fingerprints by firmware alone.
+    # Three-row CX-5 derivative on the CX-9 wheelbase (chassis KG): the CX-9 specs stand in. It has no
+    # VIN year field to decode, so it fingerprints by firmware alone (docs/zoompilot/mazda-fingerprinting.md).
     MAZDA_CX9_2021.specs,
   )
 
@@ -269,9 +217,8 @@ class LKAS_LIMITS:
   ENABLE_SPEED = 52     # kph
 
 
-# Torque tunes for a platform whose params.toml entry is borrowed, on params.toml's scale:
-# (latAccelFactor, friction). The CX-5 2022 substitutes the CX-9 2021's 1.76; its own global
-# learner reads 1.222 (2026-09-29, docs/zoompilot/lateral-tune.md).
+# (latAccelFactor, friction) on params.toml's scale for a platform whose params.toml entry is
+# borrowed: the CX-5 2022's own learned values, not the CX-9 2021's (docs/zoompilot/lateral-tune.md).
 TORQUE_TUNES = {
   CAR.MAZDA_CX5_2022: (1.222, 0.154),
 }
@@ -287,9 +234,8 @@ STEER_TO_ZERO_EPS_FW = {
 # Platforms that ship the steer-to-zero EPS from the factory: what an unread EPS falls back to.
 STEER_TO_ZERO_PLATFORMS = frozenset({CAR.MAZDA_CX5_2022, CAR.MAZDA_CX8_2023})
 
-# The 2016.5-era radar kept by an EPS-swapped older body. Listed for fingerprinting, but
-# it never publishes 0x361-0x366 on bus 0; its one frame is fully static — no counter, no
-# checksum. Stored unpadded; matched with nulls stripped so UDS padding cannot break it.
+# The 2016.5-era radar an EPS-swapped older body can keep: no tracks on bus 0, one static frame
+# (docs/zoompilot/mazda-longitudinal.md). Stored unpadded and matched with nulls stripped.
 G46L_RADAR_FW = {
   b'G46L-67XA1-C',
 }
@@ -301,8 +247,6 @@ class Buttons:
   SET_MINUS = 2
   RESUME = 3
   CANCEL = 4
-  # The physical TJA button, sent only on the camera bus to switch the camera's own TJA/CTS off.
-  TJA = 5
 
 
 def platform_from_vin(vin: str) -> str | None:
