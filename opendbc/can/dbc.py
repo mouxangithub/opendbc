@@ -17,7 +17,6 @@ from opendbc.car.volkswagen.mqbcan import volkswagen_meb_alt_crc_checksum, volks
 from opendbc.car.tesla.teslacan import tesla_checksum
 from opendbc.car.body.bodycan import body_checksum
 from opendbc.car.psa.psacan import psa_checksum
-from opendbc.car.mazda.mazdacan import mazda2019_checksum
 
 
 class SignalType:
@@ -35,7 +34,6 @@ class SignalType:
   TESLA_CHECKSUM = 11
   PSA_CHECKSUM = 12
   VOLKSWAGEN_MLB_CHECKSUM = 13
-  MAZDA2019_CHECKSUM = 14
 
 
 @dataclass
@@ -210,8 +208,6 @@ def get_checksum_state(dbc_name: str) -> ChecksumState | None:
     return ChecksumState(SignalType.TESLA_CHECKSUM, tesla_checksum, tesla_setup_signal)
   elif dbc_name.startswith("psa_"):
     return ChecksumState(SignalType.PSA_CHECKSUM, psa_checksum)
-  elif dbc_name.startswith(("mazda_2019", "mazda_2023")):
-    return ChecksumState(SignalType.MAZDA2019_CHECKSUM, mazda2019_checksum)
   return None
 
 
