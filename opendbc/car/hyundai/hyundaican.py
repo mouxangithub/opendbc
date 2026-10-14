@@ -133,8 +133,8 @@ def create_lfahda_mfc(packer, enabled, lfa_icon):
 
 def create_acc_commands(packer, enabled, accel, upper_jerk, idx, lead_data: CanLeadData,
                         hud_control, set_speed, stopping, long_override, use_fca, CP,
-                        main_cruise_enabled, tuning, soft_hold_active: int = 0,
-                        ESCC: EnhancedSmartCruiseControl | None = None):
+                        main_cruise_enabled, tuning, ESCC: EnhancedSmartCruiseControl | None = None,
+                        soft_hold_active: int = 0):
   commands = []
 
   def get_scc11_values():

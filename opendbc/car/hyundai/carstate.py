@@ -19,6 +19,10 @@ ButtonType = structs.CarState.ButtonEvent.Type
 
 PREV_BUTTON_SAMPLES = 8
 CLUSTER_SAMPLE_RATE = 20  # frames
+# How often the stock-nav tunables (speed-camera distance, navi control, school zone)
+# are re-read from Params. These change rarely, so poll at ~3 s (60 frames @20 Hz)
+# instead of reading Params every carstate update.
+VEHICLE_SPEED_CAMERA_PARAM_UPDATE_FRAMES = 60
 STANDSTILL_THRESHOLD = 12 * 0.03125
 
 # Cancel button can sometimes be ACC pause/resume button, main button can also enable on some cars
@@ -31,6 +35,24 @@ CANFD_NAVI_PROFILE_MSG = "CANFD_NAVI_PROFILE_093"
 CANFD_NAVI_STATUS_MSG = "CANFD_NAVI_STATUS_380"
 CANFD_NAVI_CAMERA_ACTIVE_BIT = 0x40
 CANFD_NAVI_STATUS_TIMEOUT_NS = 1_000_000_000
+
+# PV5 wrapped-navigation HDA frame (0x364). This fork does not decode the PV5
+# wrapped variant (canfd_wrapped_navi stays False), so the name is only a token.
+CANFD_HDA_INFO_MSG = "CANFD_HDA_INFO_364"
+
+# Stock-navigation camera/event tunables (carrot navi gates read these). The
+# camera "kind" nibble values that mark a real speed camera; controlled-access
+# road classes (highway/motorway) used to decide whether to honour the event.
+VEHICLE_NAVI_CAMERA_KINDS = (1, 2, 3)
+VEHICLE_NAVI_CONTROLLED_ACCESS_LINK_CLASSES = (1, 2)
+VEHICLE_NAVI_CONTROLLED_ACCESS_ROAD_CLASSES = (1, 2)
+VEHICLE_NAVI_CAMERA_MATCH_MARGIN = 5.0        # m tolerance matching a preview to its pass
+VEHICLE_NAVI_MAX_EVENTS = 8                  # buffered navi events
+VEHICLE_NAVI_MAX_EVENT_DISTANCE = 2000       # m, ignore previews farther than this
+VEHICLE_NAVI_PASSED_EVENT_DISTANCE = 30      # m behind current distance counts as passed
+VEHICLE_NAVI_SCHOOL_ZONE_MAX_DISTANCE = 500  # m a school-zone alert stays active
+VEHICLE_NAVI_POSITION_TIMEOUT_NS = 3_000_000_000   # navi position validity
+VEHICLE_NAVI_ROUTE_TIMEOUT_NS = 10_000_000_000     # navi route validity
 
 
 def is_canfd_navi_camera_active(values) -> bool:
@@ -93,6 +115,9 @@ class CarState(CarStateBase, EsccCarStateBase, MadsCarState, CarStateExt):
     self.navi_profile_4be = None
     self.hda_info_4a3 = None  # not decoded in this fork; navi helpers None-guard it
     self.pv5_section_start_prev = False
+    # this fork does not decode the PV5 wrapped-navigation CAN variant, so the
+    # CANFD nav section is never read from the alt/wrapped parser
+    self.canfd_wrapped_navi = False
     self.totalDistance = 0.0
     self.vehicleSpeedCameraParamsCounter = 0
     self.vehicleSpeedCameraDistanceTime = 0.0
