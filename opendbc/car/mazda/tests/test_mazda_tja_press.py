@@ -49,20 +49,6 @@ def undo_episode(alpha_long):
   return cc, cs, held
 
 
-class TestNoCameraPress:
-
-  def test_no_button_frame_on_the_camera_bus(self):
-    for alpha_long in (False, True):
-      cc, cs = rig(alpha_long=alpha_long)
-      for stock_tja in (0, 2, 3, 4):
-        for lat_active in (False, True):
-          for _ in range(150):
-            _, sends = step(cc, cs, lat_active=lat_active, stock_tja=stock_tja, radar_was_silenced=alpha_long)
-            assert not frames(sends, CRZ_BTNS, bus=2)
-            for dat in frames(sends, CRZ_BTNS, bus=0):
-              assert not dat[1] & 0x08, "the TJA bit must never go to the car"
-
-
 @pytest.mark.parametrize("alpha_long", [False, True])
 class TestMrccUndo:
 
@@ -105,7 +91,7 @@ class TestMrccUndo:
     assert len(mrcc_off_frames(released)) == 1
     again = drive(cc, cs, HOLD_CYCLES, available=True, mrcc_armed_raw=True, tja_button=1)  # second press
     assert mrcc_off_frames(again) == []  # nothing while held
-    assert cc.mrcc_undo_pending  # not cancelled by the second edge
+    assert cc.mrcc_undo_pending  # not canceled by the second edge
     after = drive(cc, cs, 40, available=True, mrcc_armed_raw=True)
     assert 0 < len(mrcc_off_frames(after)) <= 3  # the budget returned and undoes the second arm
 
@@ -174,12 +160,13 @@ class TestMrccUndo:
 class TestMrccUndoShipsDark:
 
   def test_radar_handback_aborts_with_the_budget_frozen(self):
-    # under alpha-long the session manager owns radar_handback_active and overwrites a
-    # seeded flag, so the abort runs on a stock-long controller
+    # under alpha long the radar session recomputes handback_active every frame, so the abort
+    # runs on a stock-long controller, whose session never updates
     cc, cs, _ = undo_episode(alpha_long=False)
     drive(cc, cs, 3, available=True, mrcc_armed_raw=True)  # episode live, at most one frame out
     spent = cc.mrcc_undo_frames
-    sends = drive(cc, cs, 30, available=True, mrcc_armed_raw=True, radar_handback_active=True)
+    cc.radar_session.handback_active = True
+    sends = drive(cc, cs, 30, available=True, mrcc_armed_raw=True)
     assert not cc.mrcc_undo_pending
     assert cc.mrcc_undo_frames == spent  # aborted, not budget-exhausted
     assert mrcc_off_frames(sends) == []

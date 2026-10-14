@@ -2,18 +2,20 @@
 # bin centers in m/s. LAF and friction seed per-bin SVD fits and their +/-30% sanity bounds.
 # Learned bins persist across boots. Increment seed_version when new seeds must invalidate
 # existing caches and restart learning; an omitted version is zero.
+# min_speed is the first bin's lower edge in m/s, 5 when omitted; slower points are not learned.
 
 [MAZDA_CX5_2022]
-# One CX-5 2022's learned values (2026-09-29), converted to the flat 1200-count STEER_MAX with
-# the same counts on the wire; 34.5 and 37 m/s take that table's values there. Friction up to
-# 28 m/s was refit on 2026-10-01 from that car's own bins, learned on 1200 with the per-bin
-# freeze fixed. On 2026-10-04 the six bins through 28 m/s took that car's filtered learned
-# values. Version 2 retires the stepped-scale caches; both refits are on the same scale, so they
-# keep them. Provenance and fits: docs/zoompilot/lateral-tune.md, "Seeds".
-speed_bp    = [6.5, 9.5, 12.0, 16.4, 21.0, 28.0, 34.5, 37.0]
-laf_bp      = [2.37, 2.63, 2.13, 1.74, 1.85, 2.27, 2.54, 2.56]
-friction_bp = [0.201, 0.145, 0.135, 0.134, 0.104, 0.084, 0.071, 0.070]
-seed_version = 2
+# One CX-5 2022's filtered learned values (2026-10-13) on the flat 1200-count STEER_MAX, every
+# bin full. The 3.5 m/s crawl bin (2-5 m/s, min_speed its lower edge, its upper edge the 5 m/s
+# the 6.5 m/s bin always had) is fit offline from that car's rlogs since 2026-09-30 with
+# speed_bin_seeds.py, friction converted to the learner's terms (the offline fit reads ~15% high
+# beside the device's 6.5 m/s bin). Version 3: the new bin changes the centers, which retires the
+# caches regardless. Provenance and fits: docs/zoompilot/lateral-tune.md, "Seeds".
+speed_bp    = [3.5, 6.5, 9.5, 12.0, 16.4, 21.0, 28.0, 34.5, 37.0]
+laf_bp      = [1.80, 2.16, 2.37, 1.94, 1.69, 1.80, 1.96, 2.20, 2.31]
+friction_bp = [0.220, 0.206, 0.151, 0.143, 0.140, 0.122, 0.105, 0.095, 0.085]
+min_speed = 2.0
+seed_version = 3
 
 [MAZDA_CX9_2021]
 # Learned on a CX-9 with a CX-5 2022 donor EPS; the stock EPS keeps the 45 kph steering floor

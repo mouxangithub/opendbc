@@ -358,7 +358,7 @@
 |Škoda|Superb 2015-22|Adaptive Cruise Control (ACC) & Lane Assist|[Upstream](#upstream)|
 |Tesla|Model 3 (with HW3) 2019-23|All|[Upstream](#upstream)|
 |Tesla|Model 3 (with HW4) 2024-25|All|[Upstream](#upstream)|
-|Tesla|Model X (with HW4) 2024|All|[Dashcam mode](#dashcam)|
+|Tesla|Model X (with HW4) 2024|All|[Community](community)|
 |Tesla|Model Y (with HW3) 2020-24|All|[Upstream](#upstream)|
 |Tesla|Model Y (with HW4) 2023-25|All|[Upstream](#upstream)|
 |Toyota|Alphard 2019-20|All|[Upstream](#upstream)|

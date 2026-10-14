@@ -4,17 +4,25 @@ Copyright (c) 2026-, Zeph Leggett.
 This file is part of zoompilot and is licensed under the MIT License.
 See the LICENSE.md file in the root directory for more details.
 """
-from opendbc.car import DT_CTRL
+import numpy as np
+
+from opendbc.car import DT_CTRL, rate_limit
 from opendbc.car.mazda import mazdacan
 from opendbc.car.mazda.values import CarControllerParams
 
-
-RESUME_UNLATCH_LATCHED_FRAMES = int(CarControllerParams.RESUME_UNLATCH_LATCHED_T / DT_CTRL)
-RESUME_REPULSE_FRAMES = int(CarControllerParams.RESUME_REPULSE_T / DT_CTRL)
-LEAD_DEBOUNCE_FRAMES = int(CarControllerParams.LEAD_DEBOUNCE_T / DT_CTRL)
-RELEASE_DEBOUNCE_FRAMES = int(CarControllerParams.RELEASE_DEBOUNCE_T / DT_CTRL)
-RELEASE_ACCEL = CarControllerParams.RELEASE_ACCEL
-BREAKAWAY_FRAMES = int(CarControllerParams.ACCEL_BREAKAWAY_T / DT_CTRL)
+# Stock body-latched releases use a RESUME_UNLATCHING pulse of 9 wire frames, the latched-family mode.
+RESUME_UNLATCH_LATCHED_FRAMES = int(0.18 / DT_CTRL)
+# Retry one unanswered body-latched release after this, the body still holding, then return control to the plan.
+RESUME_REPULSE_FRAMES = int(1.0 / DT_CTRL)
+# Debounce lead visibility before advertising a radar track.
+LEAD_DEBOUNCE_FRAMES = int(0.5 / DT_CTRL)
+# Debounce movement requests before releasing a standstill hold.
+RELEASE_DEBOUNCE_FRAMES = int(0.2 / DT_CTRL)
+# A plan must ask for more than this to open a hold: the e2e model drifts up to +0.19 at a stop
+# before its shouldStop lands, and every logged drive-off passes 0.25 within 1.1 s.
+RELEASE_ACCEL = 0.25  # m/s^2
+# The still-stopped breakaway ramp gives up after this.
+BREAKAWAY_FRAMES = int(3.0 / DT_CTRL)
 
 
 class StandstillHold:
@@ -93,6 +101,75 @@ class StandstillHold:
     return not self.car_has_hold
 
 
+class AccelShaper:
+  """The CRZ_INFO command between the plan and the wire, shaped like stock MRCC's.
+
+  A hold's release ramps up from the relaxed command, with a bounded breakaway while the car is
+  still stopped. Otherwise the plan is slew-limited, and positive commands follow stock's
+  ceiling and build rate at this speed and lift at stock's rate. The standstill hold's own
+  commands come last. accel_last is the command sent the frame before.
+  """
+
+  def __init__(self):
+    self.release_ramp: float | None = None
+    self.breakaway_frames = 0
+
+  def update(self, long_active: bool, plan_accel: float, accel_last: float, sm: StandstillHold,
+             standstill: bool, body_hold: bool, v_ego: float) -> float:
+    if sm.just_released:
+      # Never-latched stops relax in one frame; latched holds ramp from the relaxed command.
+      self.release_ramp = CarControllerParams.ACCEL_HOLD_LATCHED if sm.latched_release else \
+                          CarControllerParams.ACCEL_RELEASE_BAND
+    elif sm.holding or not long_active:
+      # Re-holds and driver overrides terminate the release ramp.
+      self.release_ramp = None
+
+    accel = 0.
+    if long_active:
+      accel = float(np.clip(plan_accel, CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX))
+      # Continue a bounded release ramp while stopped because the plan may not break static hold.
+      if self.release_ramp is None or not standstill:
+        self.breakaway_frames = 0
+      else:
+        self.breakaway_frames += 1
+      breakaway = standstill and self.breakaway_frames <= BREAKAWAY_FRAMES
+      # Bound breakaway by stock authority and by the plan-relative margin.
+      ramp_ceiling = max(accel, min(CarControllerParams.ACCEL_BREAKAWAY_MAX,
+                                    accel + CarControllerParams.ACCEL_BREAKAWAY_OVERSHOOT))
+      if self.release_ramp is not None and (self.release_ramp < accel or breakaway):
+        # The release ramp owns the command until it reaches the plan. Body-latched holds remain
+        # at the relaxed command until the body lets go.
+        accel = self.release_ramp
+        if not (sm.latched_release and body_hold):
+          # Follow a falling plan ceiling at the winddown limit.
+          self.release_ramp = max(min(self.release_ramp + CarControllerParams.ACCEL_RELEASE_RAMP * DT_CTRL, ramp_ceiling),
+                                  self.release_ramp + CarControllerParams.ACCEL_WINDDOWN_LIMIT)
+      else:
+        self.release_ramp = None
+        # Track overrides in accel_last so control resumes through the slew limiter.
+        accel = rate_limit(accel, accel_last, CarControllerParams.ACCEL_WINDDOWN_LIMIT,
+                           CarControllerParams.ACCEL_WINDUP_LIMIT)
+        if accel > 0.:
+          # Shape positive commands to stock MRCC's ceiling and build rate at this speed.
+          ceiling = float(np.interp(v_ego, CarControllerParams.ACCEL_CEILING_BP, CarControllerParams.ACCEL_CEILING_V))
+          build = float(np.interp(v_ego, CarControllerParams.ACCEL_BUILD_BP, CarControllerParams.ACCEL_BUILD_V)) * DT_CTRL
+          accel = min(accel, ceiling, max(accel_last, 0.) + build)
+        if accel_last > 0. and plan_accel >= 0.:
+          # Lift the throttle at stock's rate; a brake request bypasses this above.
+          accel = max(accel, accel_last + CarControllerParams.ACCEL_LIFT_LIMIT * DT_CTRL)
+      if sm.car_has_hold:
+        # Stop requesting brake hold after the body ECU takes ownership.
+        accel = CarControllerParams.ACCEL_HOLD_LATCHED
+      elif sm.holding:
+        # Freeze the braking command while STOPPING is asserted.
+        accel = min(accel, 0.) if plan_accel <= 0. else min(accel_last, 0.)
+      if sm.resume_unlatching:
+        # Bound the latched release pulse to stock's command range.
+        accel = min(max(accel, CarControllerParams.ACCEL_HOLD_LATCHED),
+                    CarControllerParams.ACCEL_RESUME_PULSE_MAX)
+    return accel
+
+
 class AdvertisedLead:
   """Maintain consistent lead state across CRZ_CTRL and the 0x364 track.
 
@@ -105,7 +182,6 @@ class AdvertisedLead:
     self.flip_frames = 0
     self.holding = False
     self.lead = None
-    self.real_lead = None
     self._measured = None
 
   def update(self, lead_visible: bool, d_rel: float, v_rel: float, holding: bool) -> None:
@@ -126,8 +202,7 @@ class AdvertisedLead:
       # Propagate range through the gap instead of repeating a frozen track.
       d, v = self._measured
       self._measured = (d + v * DT_CTRL, v)
-    self.real_lead = self._measured if self.visible else None
-    self.lead = self.real_lead
+    self.lead = self._measured if self.visible else None
     self.holding = holding
 
   @property

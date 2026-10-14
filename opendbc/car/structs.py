@@ -62,6 +62,7 @@ class CarParamsSP:
   pcmCruiseSpeed: bool = auto_field()
   intelligentCruiseButtonManagementAvailable: bool = auto_field()
   enableGasInterceptor: bool = auto_field()
+  zoompilot: 'CarParamsZP' = field(default_factory=lambda: CarParamsZP())
 
   neuralNetworkLateralControl: 'CarParamsSP.NeuralNetworkLateralControl' = field(default_factory=lambda: CarParamsSP.NeuralNetworkLateralControl())
 
@@ -152,6 +153,7 @@ class CarControlSP:
   # silenced stock ECU to service before an onroad cycle is requested (e.g. the
   # Mazda radar's default-session hand-back)
   stockEcuHandBack: bool = auto_field()
+  zoompilot: 'CarControlZP' = field(default_factory=lambda: CarControlZP())
 
   @auto_dataclass
   class Param:
@@ -176,3 +178,16 @@ class CarStateSP:
   speedLimit: float = auto_field()
   engineOff: bool = auto_field()
   engineRpm: float = auto_field()
+
+
+# zoompilot: the `zoompilot` nests of custom.capnp's sunnypilot structs, with the fields opendbc uses
+@auto_dataclass
+class CarParamsZP:
+  minimumSetSpeed: float = auto_field()  # m/s, lowest set speed the stock cruise accepts; 0 = 20 mph / 30 km/h
+
+
+@auto_dataclass
+class CarControlZP:
+  # sendButton as a sustained hold, emitted at the button message's native rate for as long as the
+  # servo asserts it, for ECUs whose long-press steps a coarse grid (e.g. Mazda +5 mph)
+  icbmHold: bool = auto_field()

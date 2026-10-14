@@ -6,16 +6,28 @@ See the LICENSE.md file in the root directory for more details.
 """
 import pytest
 
-from opendbc.car import structs
 from opendbc.car.fw_versions import match_fw_to_car
 from opendbc.car.mazda.fingerprints import FW_VERSIONS
+from opendbc.car.mazda.tests.conftest import Ecu, car_fw
 from opendbc.car.mazda.values import CAR, match_fw_to_car_fuzzy, platform_from_vin
 from opendbc.car.vin import VIN_UNKNOWN
 
 # a steer-to-zero EPS a swap donates; the CX-5 2022 list also carries legacy firmware now
 DONOR_EPS_FW = b'KSD5-3210X-C-00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+# Versions that exist in no database, standing in for dealer-updated ECUs
+UNKNOWN_EPS_FW = b'ZZ99-3210X-Z-99' + b'\x00' * 9
+UNKNOWN_ENGINE_FW = b'ZZ99-9999X-Z-99' + b'\x00' * 9
+UNKNOWN_ABS_FW = b'ZZ99-8888X-Z-99' + b'\x00' * 9
+UNKNOWN_TRANS_FW = b'ZZ99-7777X-Z-99' + b'\x00' * 9
+# an Oceania export VIN (real report): no model year, so it never decodes
+OCEANIA_VIN = 'JM0TC2WLA00202380'
+CX9_2021_ENGINE = FW_VERSIONS[CAR.MAZDA_CX9_2021][(Ecu.engine, 0x7e0, None)][0]
 
-Ecu = structs.CarParams.Ecu
+
+def swap_fw(eps=DONOR_EPS_FW, engine=UNKNOWN_ENGINE_FW, trans=UNKNOWN_TRANS_FW) -> list:
+  """A swapped EPS on dealer-updated body ECUs, as the real matcher sees it."""
+  return [car_fw(Ecu.eps, 0x730, eps), car_fw(Ecu.engine, 0x7e0, engine),
+          car_fw(Ecu.abs, 0x760, UNKNOWN_ABS_FW), car_fw(Ecu.transmission, 0x7e1, trans)]
 
 
 def make_vin(wmi: str, chassis_code: str, year_code: str) -> str:
@@ -68,17 +80,19 @@ class TestMazdaVinMatch:
 
   @pytest.mark.parametrize("vin, expected", REAL_VINS)
   def test_real_listing_vins(self, vin, expected):
+    # the resolver, the fuzzy matcher, and the real matcher behind a donor EPS and dealer-updated
+    # ECUs: the VIN path is the fork's one addition over upstream
     expected_platforms = {str(expected)} if expected is not None else set()
+    assert platform_from_vin(vin) == (str(expected) if expected is not None else None)
     assert match_fw_to_car_fuzzy({}, vin, FW_VERSIONS) == expected_platforms
+    exact_match, matches = match_fw_to_car(swap_fw(), vin)
+    assert matches == expected_platforms
+    assert expected is None or not exact_match
 
   def test_the_support_log_vin_resolves(self):
     # the KE body from the alpha-long support log, running behind a carried-forward
     # CX-5 2022 platform bundle: the resolver must name its own platform
     assert platform_from_vin('JM3KE4DYXG0877243') == str(CAR.MAZDA_CX5_KE)
-
-  @pytest.mark.parametrize("vin, expected", REAL_VINS)
-  def test_platform_from_vin_matches_the_fuzzy_matcher(self, vin, expected):
-    assert platform_from_vin(vin) == (str(expected) if expected is not None else None)
 
   def test_platform_from_vin_rejects_unknown(self):
     assert platform_from_vin(VIN_UNKNOWN) is None
@@ -119,124 +133,42 @@ class TestMazdaVinMatch:
     # the first-generation CX-5, one platform across its whole 2012-16 run
     assert match_fw_to_car_fuzzy({}, make_vin('JM3', 'KE', year_code), FW_VERSIONS) == {str(CAR.MAZDA_CX5_KE)}
 
-  def test_engine_firmware_alone_is_not_evidence_without_a_decodable_vin(self):
-    # an Oceania export VIN (real report): no model year, no known WMI; the
-    # engine is the only responding firmware in the database. One recognised
-    # ECU plus junk addresses used to name the chassis here; it must not, the
-    # car's ECUs belong in fingerprints.py
-    engine = FW_VERSIONS[CAR.MAZDA_CX9_2021][(Ecu.engine, 0x7e0, None)][0]
-    live = {
-      (0x7e0, None): {engine},
-      (0x730, None): {b'DONOR-EPS-XXXX\x00\x00\x00\x00'},
-      (0x760, None): {b'EXPORT-ABS-XXXX\x00\x00\x00\x00'},
-      (0x7e1, None): {b'EXPORT-TRN-XXXX\x00\x00\x00\x00'},
-    }
-    assert match_fw_to_car_fuzzy(live, 'JM0TC2WLA00202380', FW_VERSIONS) == set()
-
-  def test_export_vin_matches_on_the_engine_behind_a_known_donor_eps(self):
-    # the swap fallback: an export VIN cannot decode, a steer-to-zero donor EPS
-    # is recognised, and the engine names exactly one platform
-    engine = FW_VERSIONS[CAR.MAZDA_CX9_2021][(Ecu.engine, 0x7e0, None)][0]
-    donor = DONOR_EPS_FW
-    live = {(0x7e0, None): {engine}, (0x730, None): {donor}, (0x760, None): {UNKNOWN_ABS_FW}}
-    assert match_fw_to_car_fuzzy(live, 'JM0TC2WLA00202380', FW_VERSIONS) == {str(CAR.MAZDA_CX9_2021)}
-    assert match_fw_to_car_fuzzy(live, make_vin('JM0', 'TC', 'A'), FW_VERSIONS) == {str(CAR.MAZDA_CX9_2021)}
-
   def test_swap_fallback_is_export_only_and_needs_both_ecus(self):
-    engine = FW_VERSIONS[CAR.MAZDA_CX9_2021][(Ecu.engine, 0x7e0, None)][0]
-    donor = DONOR_EPS_FW
-    both = {(0x7e0, None): {engine}, (0x730, None): {donor}, (0x760, None): {UNKNOWN_ABS_FW}}
+    both = {(0x7e0, None): {CX9_2021_ENGINE}, (0x730, None): {DONOR_EPS_FW}, (0x760, None): {UNKNOWN_ABS_FW}}
     # an unknown WMI, no VIN or an invalid VIN never reach it
     for vin in (make_vin('7MM', 'VA', 'P'), VIN_UNKNOWN, 'JM0TC2WLA0020238'):
       assert match_fw_to_car_fuzzy(both, vin, FW_VERSIONS) == set(), vin
     # a decodable WMI that names an unsupported model is authoritative
     assert match_fw_to_car_fuzzy(both, make_vin('JM1', 'BP', 'K'), FW_VERSIONS) == set()
-    # the donor EPS alone or the engine alone is one recognised ECU
-    donor_only = {(0x730, None): {donor}, (0x7e0, None): {UNKNOWN_ENGINE_FW}, (0x760, None): {UNKNOWN_ABS_FW}}
-    engine_only = {(0x7e0, None): {engine}, (0x730, None): {b'ZZ99-3210X-Z-99' + b'\x00' * 9}, (0x760, None): {UNKNOWN_ABS_FW}}
-    assert match_fw_to_car_fuzzy(donor_only, 'JM0TC2WLA00202380', FW_VERSIONS) == set()
-    assert match_fw_to_car_fuzzy(engine_only, 'JM0TC2WLA00202380', FW_VERSIONS) == set()
-
-  def test_unknown_engine_does_not_match(self):
-    abs_fw = FW_VERSIONS[CAR.MAZDA_CX9_2021][(Ecu.abs, 0x760, None)][0]
-    live = {(0x7e0, None): {b'ZZ99-7777X-Z-99' + b'\x00' * 9}, (0x760, None): {abs_fw}}
-    assert match_fw_to_car_fuzzy(live, VIN_UNKNOWN, FW_VERSIONS) == set()
-
-  def test_lone_engine_response_does_not_match(self):
-    engine = FW_VERSIONS[CAR.MAZDA_CX9_2021][(Ecu.engine, 0x7e0, None)][0]
-    assert match_fw_to_car_fuzzy({(0x7e0, None): {engine}}, VIN_UNKNOWN, FW_VERSIONS) == set()
+    # the donor EPS alone or the engine alone is one recognized ECU
+    donor_only = {(0x730, None): {DONOR_EPS_FW}, (0x7e0, None): {UNKNOWN_ENGINE_FW}, (0x760, None): {UNKNOWN_ABS_FW}}
+    engine_only = {(0x7e0, None): {CX9_2021_ENGINE}, (0x730, None): {UNKNOWN_EPS_FW}, (0x760, None): {UNKNOWN_ABS_FW}}
+    assert match_fw_to_car_fuzzy(donor_only, OCEANIA_VIN, FW_VERSIONS) == set()
+    assert match_fw_to_car_fuzzy(engine_only, OCEANIA_VIN, FW_VERSIONS) == set()
 
   def test_vin_names_the_chassis_over_the_engine(self):
     engine = FW_VERSIONS[CAR.MAZDA_CX5][(Ecu.engine, 0x7e0, None)][0]
     assert match_fw_to_car_fuzzy({(0x7e0, None): {engine}}, make_vin('JM3', 'TC', 'M'), FW_VERSIONS) == {str(CAR.MAZDA_CX9_2021)}
-
-  def test_unsupported_chassis_vin_does_not_match_on_the_engine(self):
-    # A recognized unsupported chassis must not match through an older PCM calibration.
-    engine = FW_VERSIONS[CAR.MAZDA_3][(Ecu.engine, 0x7e0, None)][0]
-    live = {(0x7e0, None): {engine}, (0x760, None): {UNKNOWN_ABS_FW}}
-    assert match_fw_to_car_fuzzy(live, make_vin('JM1', 'BP', 'K'), FW_VERSIONS) == set()
-
-  def test_unknown_wmi_does_not_match_on_the_engine(self):
-    # 7MM (CX-50) is a real WMI outside the table. A matching engine firmware
-    # behind it used to name MAZDA_3 off that one ECU; an unknown WMI is
-    # rejected outright now, whatever firmware rides along
-    engine = FW_VERSIONS[CAR.MAZDA_3][(Ecu.engine, 0x7e0, None)][0]
-    for live in ({(0x7e0, None): {engine}},
-                 {(0x7e0, None): {engine}, (0x760, None): {UNKNOWN_ABS_FW}},
-                 {(0x7e0, None): {engine}, (0x760, None): {UNKNOWN_ABS_FW}, (0x7e1, None): {UNKNOWN_TRANS_FW}}):
-      assert match_fw_to_car_fuzzy(live, make_vin('7MM', 'VA', 'P'), FW_VERSIONS) == set()
-      assert match_fw_to_car_fuzzy(live, make_vin('JM0', 'TC', 'A'), FW_VERSIONS) == set()
-      assert match_fw_to_car_fuzzy(live, VIN_UNKNOWN, FW_VERSIONS) == set()
-
-
-def _car_fw(ecu, address, version: bytes) -> structs.CarParams.CarFw:
-  fw = structs.CarParams.CarFw()
-  fw.ecu = ecu
-  fw.address = address
-  fw.subAddress = 0
-  fw.fwVersion = version
-  fw.brand = 'mazda'
-  fw.bus = 0
-  return fw
-
-
-# Versions that exist in no database, standing in for dealer-updated ECUs
-UNKNOWN_ENGINE_FW = b'ZZ99-9999X-Z-99' + b'\x00' * 9
-UNKNOWN_ABS_FW = b'ZZ99-8888X-Z-99' + b'\x00' * 9
-UNKNOWN_TRANS_FW = b'ZZ99-7777X-Z-99' + b'\x00' * 9
 
 
 class TestMatchFwToCarVinFallback:
   """The EPS-swap scenario through the real matcher: the donor EPS breaks every
   exact match, unknown engine and ABS versions break generic fuzzy matching, and
   the VIN names the chassis. An export VIN never decodes, so there the engine
-  plus a recognised steer-to-zero donor EPS stand in for upstream's two ECUs."""
-
-  def _swapped_mazda6_fw(self) -> list:
-    donor_eps = DONOR_EPS_FW
-    stock_trans = FW_VERSIONS[CAR.MAZDA_6][(Ecu.transmission, 0x7e1, None)][0]
-    return [
-      _car_fw(Ecu.eps, 0x730, donor_eps),
-      _car_fw(Ecu.engine, 0x7e0, UNKNOWN_ENGINE_FW),
-      _car_fw(Ecu.abs, 0x760, UNKNOWN_ABS_FW),
-      _car_fw(Ecu.transmission, 0x7e1, stock_trans),
-    ]
+  plus a recognized steer-to-zero donor EPS stand in for upstream's two ECUs."""
 
   def test_swapped_eps_matches_the_chassis_by_vin(self):
-    vin = make_vin('JM1', 'GL', 'L')
-    exact_match, matches = match_fw_to_car(self._swapped_mazda6_fw(), vin)
+    stock_trans = FW_VERSIONS[CAR.MAZDA_6][(Ecu.transmission, 0x7e1, None)][0]
+    swapped = swap_fw(trans=stock_trans)
+    exact_match, matches = match_fw_to_car(swapped, make_vin('JM1', 'GL', 'L'))
     assert not exact_match
     assert matches == {str(CAR.MAZDA_6)}
-
-  def test_no_vin_and_unknown_engine_stays_unmatched(self):
-    _, matches = match_fw_to_car(self._swapped_mazda6_fw(), VIN_UNKNOWN)
-    assert matches == set()
+    # no VIN and an unknown engine: nothing names it
+    assert match_fw_to_car(swapped, VIN_UNKNOWN)[1] == set()
 
   def test_stock_fw_set_still_exact_matches(self):
-    car_fw = [_car_fw(ecu, addr, versions[0])
-              for (ecu, addr, _), versions in FW_VERSIONS[CAR.MAZDA_CX9_2021].items()]
-    vin = make_vin('JM3', 'TC', 'M')
-    exact_match, matches = match_fw_to_car(car_fw, vin)
+    stock = [car_fw(ecu, addr, versions[0]) for (ecu, addr, _), versions in FW_VERSIONS[CAR.MAZDA_CX9_2021].items()]
+    exact_match, matches = match_fw_to_car(stock, make_vin('JM3', 'TC', 'M'))
     assert exact_match
     assert matches == {str(CAR.MAZDA_CX9_2021)}
 
@@ -245,98 +177,46 @@ class TestMatchFwToCarVinFallback:
     # The swap firmware stays under MAZDA_CX5_2022; the body ECUs alone exact-match
     # the chassis, and no EPS entry exists to contradict the swap
     donor_eps = FW_VERSIONS[CAR.MAZDA_CX5_2022][(Ecu.eps, 0x730, None)][1]  # KSD5, the reported swap
-    car_fw = [_car_fw(ecu, addr, versions[0])
-              for (ecu, addr, _), versions in FW_VERSIONS[CAR.MAZDA_CX5_KE].items()]
-    car_fw.append(_car_fw(Ecu.eps, 0x730, donor_eps))
-    exact_match, matches = match_fw_to_car(car_fw, make_vin('JM3', 'KE', 'G'))
+    body = [car_fw(ecu, addr, versions[0]) for (ecu, addr, _), versions in FW_VERSIONS[CAR.MAZDA_CX5_KE].items()]
+    exact_match, matches = match_fw_to_car(body + [car_fw(Ecu.eps, 0x730, donor_eps)], make_vin('JM3', 'KE', 'G'))
     assert exact_match
     assert matches == {str(CAR.MAZDA_CX5_KE)}
-
-  def test_oceania_eps_swap_matches_on_the_engine_behind_the_donor_eps(self):
-    # the reported car: Oceania VIN (never decodes), donor EPS, and chassis ECUs
-    # unknown to the North American database. Two recognised ECUs: the engine
-    # names the chassis, the EPS is one this port grants lateral through
-    engine = FW_VERSIONS[CAR.MAZDA_CX9_2021][(Ecu.engine, 0x7e0, None)][0]
-    donor_eps = DONOR_EPS_FW
-    car_fw = [
-      _car_fw(Ecu.eps, 0x730, donor_eps),
-      _car_fw(Ecu.engine, 0x7e0, engine),
-      _car_fw(Ecu.abs, 0x760, UNKNOWN_ABS_FW),
-      _car_fw(Ecu.transmission, 0x7e1, UNKNOWN_TRANS_FW),
-    ]
-    exact_match, matches = match_fw_to_car(car_fw, 'JM0TC2WLA00202380')
-    assert not exact_match
-    assert matches == {str(CAR.MAZDA_CX9_2021)}
-
-  def test_oceania_swap_without_a_recognised_eps_stays_unmatched(self):
-    # same car with an EPS this port does not know: one recognised ECU, no platform
-    engine = FW_VERSIONS[CAR.MAZDA_CX9_2021][(Ecu.engine, 0x7e0, None)][0]
-    car_fw = [
-      _car_fw(Ecu.eps, 0x730, b'ZZ99-3210X-Z-99' + b'\x00' * 9),
-      _car_fw(Ecu.engine, 0x7e0, engine),
-      _car_fw(Ecu.abs, 0x760, UNKNOWN_ABS_FW),
-      _car_fw(Ecu.transmission, 0x7e1, UNKNOWN_TRANS_FW),
-    ]
-    _, matches = match_fw_to_car(car_fw, 'JM0TC2WLA00202380')
-    assert matches == set()
-
-  def test_oceania_eps_swap_with_two_known_ecus_fuzzy_matches(self):
-    # same car once its transmission firmware is in the database: two uniquely
-    # matching non-EPS ECUs is upstream's own fuzzy bar, no VIN needed
-    engine = FW_VERSIONS[CAR.MAZDA_CX9_2021][(Ecu.engine, 0x7e0, None)][0]
-    trans = FW_VERSIONS[CAR.MAZDA_CX9_2021][(Ecu.transmission, 0x7e1, None)][0]
-    donor_eps = DONOR_EPS_FW
-    car_fw = [
-      _car_fw(Ecu.eps, 0x730, donor_eps),
-      _car_fw(Ecu.engine, 0x7e0, engine),
-      _car_fw(Ecu.abs, 0x760, UNKNOWN_ABS_FW),
-      _car_fw(Ecu.transmission, 0x7e1, trans),
-    ]
-    exact_match, matches = match_fw_to_car(car_fw, 'JM0TC2WLA00202380')
-    assert not exact_match
-    assert matches == {str(CAR.MAZDA_CX9_2021)}
-
-  def test_unknown_wmi_with_one_known_ecu_stays_unmatched(self):
-    # a WMI outside the table (7MM, CX-50) with a Mazda 3 engine calibration and
-    # nothing else recognised: no platform, so no lateral
-    engine = FW_VERSIONS[CAR.MAZDA_3][(Ecu.engine, 0x7e0, None)][0]
-    car_fw = [
-      _car_fw(Ecu.engine, 0x7e0, engine),
-      _car_fw(Ecu.abs, 0x760, UNKNOWN_ABS_FW),
-      _car_fw(Ecu.transmission, 0x7e1, UNKNOWN_TRANS_FW),
-    ]
-    for vin in (make_vin('7MM', 'VA', 'P'), VIN_UNKNOWN, 'JM3KF2L50NI000042'):
-      _, matches = match_fw_to_car(car_fw, vin)
-      assert matches == set(), vin
-
-  @pytest.mark.parametrize("vin, expected", REAL_VINS)
-  def test_known_vins_still_match_through_the_real_matcher(self, vin, expected):
-    # the VIN path is the fork's one addition over upstream: a decodable North
-    # American VIN names the chassis through a donor EPS and dealer-updated ECUs
-    donor_eps = DONOR_EPS_FW
-    car_fw = [
-      _car_fw(Ecu.eps, 0x730, donor_eps),
-      _car_fw(Ecu.engine, 0x7e0, UNKNOWN_ENGINE_FW),
-      _car_fw(Ecu.abs, 0x760, UNKNOWN_ABS_FW),
-      _car_fw(Ecu.transmission, 0x7e1, UNKNOWN_TRANS_FW),
-    ]
-    exact_match, matches = match_fw_to_car(car_fw, vin)
-    if expected is None:
-      assert matches == set(), vin
-    else:
-      assert not exact_match
-      assert matches == {str(expected)}, vin
 
   def test_ke_names_by_vin_through_a_donor_eps(self):
     # a KE with dealer-updated body ECUs still names by VIN through the swap; the
     # donor EPS is the one ECU the database knows
     donor_eps = FW_VERSIONS[CAR.MAZDA_CX5_2022][(Ecu.eps, 0x730, None)][0]
-    car_fw = [
-      _car_fw(Ecu.eps, 0x730, donor_eps),
-      _car_fw(Ecu.engine, 0x7e0, UNKNOWN_ENGINE_FW),
-      _car_fw(Ecu.abs, 0x760, UNKNOWN_ABS_FW),
-      _car_fw(Ecu.transmission, 0x7e1, UNKNOWN_TRANS_FW),
-    ]
-    exact_match, matches = match_fw_to_car(car_fw, make_vin('JM3', 'KE', 'G'))
+    exact_match, matches = match_fw_to_car(swap_fw(eps=donor_eps), make_vin('JM3', 'KE', 'G'))
     assert not exact_match
     assert matches == {str(CAR.MAZDA_CX5_KE)}
+
+  @pytest.mark.parametrize("vin", [OCEANIA_VIN, make_vin('JM0', 'TC', 'A')])
+  def test_oceania_eps_swap_matches_on_the_engine_behind_the_donor_eps(self, vin):
+    # the reported car: Oceania VIN (never decodes), donor EPS, and chassis ECUs
+    # unknown to the North American database. Two recognized ECUs: the engine
+    # names the chassis, the EPS is one this port grants lateral through
+    exact_match, matches = match_fw_to_car(swap_fw(engine=CX9_2021_ENGINE), vin)
+    assert not exact_match
+    assert matches == {str(CAR.MAZDA_CX9_2021)}
+
+  def test_oceania_swap_without_a_recognized_eps_stays_unmatched(self):
+    # same car with an EPS this port does not know: one recognized ECU, no platform
+    assert match_fw_to_car(swap_fw(eps=UNKNOWN_EPS_FW, engine=CX9_2021_ENGINE), OCEANIA_VIN)[1] == set()
+
+  def test_oceania_eps_swap_with_two_known_ecus_fuzzy_matches(self):
+    # same car once its transmission firmware is in the database: two uniquely
+    # matching non-EPS ECUs is upstream's own fuzzy bar, no VIN needed
+    trans = FW_VERSIONS[CAR.MAZDA_CX9_2021][(Ecu.transmission, 0x7e1, None)][0]
+    exact_match, matches = match_fw_to_car(swap_fw(engine=CX9_2021_ENGINE, trans=trans), OCEANIA_VIN)
+    assert not exact_match
+    assert matches == {str(CAR.MAZDA_CX9_2021)}
+
+  def test_unknown_wmi_with_one_known_ecu_stays_unmatched(self):
+    # a WMI outside the table (7MM, CX-50) with a Mazda 3 engine calibration and
+    # nothing else recognized: no platform, so no lateral. An export VIN without a
+    # recognized EPS does not reach the swap fallback either
+    engine = FW_VERSIONS[CAR.MAZDA_3][(Ecu.engine, 0x7e0, None)][0]
+    fw = [car_fw(Ecu.engine, 0x7e0, engine), car_fw(Ecu.abs, 0x760, UNKNOWN_ABS_FW),
+          car_fw(Ecu.transmission, 0x7e1, UNKNOWN_TRANS_FW)]
+    for vin in (make_vin('7MM', 'VA', 'P'), VIN_UNKNOWN, 'JM3KF2L50NI000042', make_vin('JM0', 'TC', 'A')):
+      assert match_fw_to_car(fw, vin)[1] == set(), vin

@@ -13,6 +13,8 @@ and an unsafe state already on the bus is withdrawn immediately, outside the 2 H
 import pytest
 
 from opendbc.car.mazda import mazdacan
+from opendbc.sunnypilot.car.mazda.mads import MADS_HUD_SAFE_BASE_PAYLOADS, MADS_HUD_WHITE_TJA_XOR, apply_mads_white_hud, \
+  white_hud_allowlist_base
 from opendbc.sunnypilot.car.mazda.values import MazdaFlagsSP
 
 from opendbc.car.mazda.tests.conftest import (CAM_LANEINFO, SendButtonState, VisualAlert, car_controller,
@@ -24,6 +26,24 @@ CADENCE = 50                              # the normal 2 Hz alert slot
 
 def hud_frames(sends) -> list[bytes]:
   return [d for a, d, b in sends if a == CAM_LANEINFO and b == 0]
+
+
+def is_white(dat: bytes) -> bool:
+  """An allowlisted idle base with exactly the white TJA bit XORed in."""
+  return bytes(a ^ b for a, b in zip(dat, MADS_HUD_WHITE_TJA_XOR, strict=True)) in MADS_HUD_SAFE_BASE_PAYLOADS
+
+
+def test_white_hud_allowlist_maps_tja_states_to_their_idle_base():
+  # a frame that already carries a TJA/transition state maps back to its idle base
+  assert white_hud_allowlist_base(bytes.fromhex("4201000020001040")) == BASE
+  # the counter-nibble twins are separately audited entries, not normalized away
+  assert white_hud_allowlist_base(bytes.fromhex("4201000000001060")) == bytes.fromhex("4201000000001060")
+
+
+def test_apply_mads_white_hud_only_touches_an_allowlisted_base():
+  assert apply_mads_white_hud(BASE, BASE, True) == bytes.fromhex("4201000020001040")
+  assert apply_mads_white_hud(b"\xff" * 8, b"\xff" * 8, True) == b"\xff" * 8
+  assert apply_mads_white_hud(BASE, BASE, False) == BASE
 
 
 def tja_controller(alpha_long=True):
@@ -50,7 +70,7 @@ class TestShipsDark:
                    cam_laneinfo_live=True, available=False, mrcc_armed_raw=False)
     assert hud, "the alert cadence itself must not change"
     assert all(frame % CADENCE == 0 for frame, _ in hud)
-    assert not any(mazdacan.is_mads_white_hud(d) for _, d in hud)
+    assert not any(is_white(d) for _, d in hud)
     expected = mazdacan.create_alert_command(packer(), cs.cam_laneinfo, False, False)[1]
     assert all(d == expected for _, d in hud)
 
@@ -65,7 +85,7 @@ class TestWhiteWheelGate:
   def test_white_wheel_displays_on_the_allowlisted_base(self):
     cc, cs = tja_controller()
     hud, _ = drive(cc, cs, 2 * CADENCE + 5, **self.kwargs())
-    whites = [d for _, d in hud if mazdacan.is_mads_white_hud(d)]
+    whites = [d for _, d in hud if is_white(d)]
     assert whites, "the white wheel must display once confirmed"
     assert all(d == bytes.fromhex("4201000020001040") for d in whites)
     assert cc.mads_white_hud_on_bus
@@ -74,7 +94,7 @@ class TestWhiteWheelGate:
     cc, cs = tja_controller()
     hud, _ = drive(cc, cs, CADENCE, **self.kwargs())
     # the frame-0 slot is inside the 0.5 s confirmation window: base frame, no white
-    assert hud and not any(mazdacan.is_mads_white_hud(d) for _, d in hud)
+    assert hud and not any(is_white(d) for _, d in hud)
 
   @pytest.mark.parametrize("deny,over", [
     ("MADS off", dict(mads_active=False)),
@@ -92,14 +112,15 @@ class TestWhiteWheelGate:
   def test_every_deny_blocks_the_white_state(self, deny, over):
     cc, cs = tja_controller()
     hud, _ = drive(cc, cs, 2 * CADENCE + 5, **self.kwargs(**over))
-    assert not any(mazdacan.is_mads_white_hud(d) for _, d in hud), deny
+    assert not any(is_white(d) for _, d in hud), deny
 
   def test_radar_handback_blocks_the_white_state(self):
-    # under alpha-long the session manager owns radar_handback_active and overwrites a
-    # seeded flag, so the deny is exercised on a stock-long controller
+    # under alpha long the radar session recomputes handback_active every frame, so the deny
+    # is exercised on a stock-long controller, whose session never updates
     cc, cs = tja_controller(alpha_long=False)
-    hud, _ = drive(cc, cs, 2 * CADENCE + 5, **self.kwargs(radar_handback_active=True))
-    assert not any(mazdacan.is_mads_white_hud(d) for _, d in hud)
+    cc.radar_session.handback_active = True
+    hud, _ = drive(cc, cs, 2 * CADENCE + 5, **self.kwargs())
+    assert not any(is_white(d) for _, d in hud)
 
   def test_unsafe_state_is_withdrawn_immediately(self):
     cc, cs = tja_controller()
@@ -112,5 +133,5 @@ class TestWhiteWheelGate:
     frames_out = [f for f, d in withdrawn]
     assert frames_out, "the withdraw frame must go out at once"
     assert all(f % CADENCE != 0 for f in frames_out)
-    assert all(not mazdacan.is_mads_white_hud(d) for _, d in withdrawn)
+    assert all(not is_white(d) for _, d in withdrawn)
     assert not cc.mads_white_hud_on_bus

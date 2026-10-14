@@ -110,6 +110,7 @@ class CarInterface(CarInterfaceBase):
       ret.flags |= ChryslerFlagsSP.NO_MIN_STEERING_SPEED.value
       stock_cp.minSteerSpeed = 0.
 
-    ret.intelligentCruiseButtonManagementAvailable = True
+    # CUSW safety passes only cancel and resume on CRUISE_BUTTONS (chrysler_cusw.h)
+    ret.intelligentCruiseButtonManagementAvailable = candidate not in CUSW_CARS
 
     return ret

@@ -11,7 +11,7 @@ import pytest
 
 from opendbc.car.mazda import mazdacan
 from opendbc.car.mazda.values import Buttons
-from opendbc.car.mazda.tests.conftest import CAM_LANEINFO, LEAD_TRACK, hands_code, parse_frame
+from opendbc.car.mazda.tests.conftest import CAM_LANEINFO, LEAD_TRACK, car_params, hands_code, parse_frame
 
 
 def crz_info_reference_checksum(dat):
@@ -49,33 +49,11 @@ def test_alert_command_sends_the_frame_the_cluster_draws(packer, steer_required)
   assert out["LDW_WARN_LL"] == 0 and out["LDW_WARN_RL"] == 0
 
 
-WHITE_HUD_BASE = bytes.fromhex("4201000000001040")  # the canonical OFF-family idle base
-
-
-def test_white_hud_allowlist_maps_tja_states_to_their_idle_base():
-  # a frame that already carries a TJA/transition state maps back to its idle base
-  assert mazdacan.white_hud_allowlist_base(bytes.fromhex("4201000020001040")) == WHITE_HUD_BASE
-  # the counter-nibble twins are separately audited entries, not normalized away
-  assert mazdacan.white_hud_allowlist_base(bytes.fromhex("4201000000001060")) == bytes.fromhex("4201000000001060")
-
-
-def test_apply_mads_white_hud_only_touches_an_allowlisted_base():
-  assert mazdacan.apply_mads_white_hud(WHITE_HUD_BASE, WHITE_HUD_BASE, True) == bytes.fromhex("4201000020001040")
-  assert mazdacan.apply_mads_white_hud(b"\xff" * 8, b"\xff" * 8, True) == b"\xff" * 8
-  assert mazdacan.apply_mads_white_hud(WHITE_HUD_BASE, WHITE_HUD_BASE, False) == WHITE_HUD_BASE
-
-
-def test_is_mads_white_hud_requires_the_exact_xor():
-  assert mazdacan.is_mads_white_hud(bytes.fromhex("4201000020001040"))
-  assert not mazdacan.is_mads_white_hud(WHITE_HUD_BASE)
-  assert not mazdacan.is_mads_white_hud(bytes.fromhex("4201000030001040"))
-
-
 def test_buttons_never_carry_the_tja_bit(packer):
   # never pressed by openpilot on either bus: on the car's side it toggles MADS and arms MRCC,
   # on the camera's side it switches the car's own lane-keep setting off
-  for button in (Buttons.CANCEL, Buttons.RESUME, Buttons.SET_PLUS, Buttons.SET_MINUS, Buttons.TJA):
-    _, dat, bus = mazdacan.create_button_cmd(packer, None, 3, button)
+  for button in (Buttons.CANCEL, Buttons.RESUME, Buttons.SET_PLUS, Buttons.SET_MINUS):
+    _, dat, bus = mazdacan.create_button_cmd(packer, car_params(), 3, button)
     assert bus == 0 and not dat[1] & 0x08
 
 
