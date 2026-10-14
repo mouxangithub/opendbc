@@ -2,7 +2,7 @@ from opendbc.car.can_definitions import CanData
 from opendbc.car.mazda.values import Buttons, MazdaFlags
 
 # Captured empty radar tracks required by the body ECU for stop-and-go. Only the counter
-# nibble changes; 0x364 carries the advertised lead when present.
+# nibble changes.
 RADAR_STATIC_MSG = (0x499, bytes.fromhex("0008c00000000000"))
 RADAR_TRACK_MSGS = {
   0x361: bytes.fromhex("fff7fefe1fc00080"),
@@ -12,14 +12,9 @@ RADAR_TRACK_MSGS = {
   0x365: bytes.fromhex("fff7fe7ffbff3fc0"),
   0x366: bytes.fromhex("fff7fe7ffbff3fc0"),
 }
-LEAD_TRACK_ADDR = 0x364
-# Constant bytes for an occupied 0x364 track. create_lead_track replaces its measurements.
-LEAD_TRACK_TEMPLATE = bytes.fromhex("000e00001c000000")
-DIST_OBJ_SCALE = 0.0625   # m per bit, DIST_OBJ and RELV_OBJ share it
-DIST_OBJ_MAX = 255.875    # m, the full-scale DIST_OBJ reading a track can carry
 
 # The G46L radar (2016.5 bodies) sends only this static frame and no track messages at
-# all, so the lead rides CRZ_CTRL alone; fully static — no counter, no checksum.
+# all; fully static — no counter, no checksum.
 G46L_RADAR_STATIC_MSG = (0x499, bytes.fromhex("0098400000000000"))
 
 
@@ -54,9 +49,10 @@ def create_acc_command(packer, bus, counter, accel, *, long_active, acc_availabl
   return packer.make_can_msg("CRZ_INFO", bus, values)
 
 
-def create_crz_ctrl(packer, bus, long_active, acc_available, gap_setting, radar_has_lead, stop_go_phase, acc_active_2,
-                    *, hbc_request=False):
-  # CRZ_CTRL replaces radar cruise state and mirrors stop phase and driver gap selection.
+def create_crz_ctrl(packer, bus, long_active, acc_available, gap_setting, acc_active_2, *, lead_distance=0,
+                    hbc_request=False):
+  # CRZ_CTRL replaces radar cruise state and mirrors the driver's gap selection. The cluster draws
+  # the lead from RADAR_HAS_LEAD; RADAR_LEAD_RELATIVE_DISTANCE is stock's 1 to 5 closeness bucket.
   # NEW_SIGNAL_3 (bit 13) relays the camera's high-beam request (0x440 BIT2) as the stock radar
   # does; the body raises the lamps and the cluster's green HBC light on it.
   values = {
@@ -66,38 +62,19 @@ def create_crz_ctrl(packer, bus, long_active, acc_available, gap_setting, radar_
     "CRZ_ACTIVE": int(long_active),
     "CRZ_AVAILABLE": int(long_active or acc_available),
     "DISTANCE_SETTING": gap_setting,
-    "RADAR_HAS_LEAD": int(radar_has_lead),
-    "RADAR_LEAD_RELATIVE_DISTANCE": stop_go_phase,
+    "RADAR_HAS_LEAD": int(lead_distance > 0),
+    "RADAR_LEAD_RELATIVE_DISTANCE": lead_distance,
     "ACC_ACTIVE_2": int(acc_active_2),
     "NEW_SIGNAL_3": int(hbc_request),
   }
   return packer.make_can_msg("CRZ_CTRL", bus, values)
 
 
-def create_lead_track(d_rel: float, v_rel: float) -> bytes:
-  """Encode the advertised lead in the camera's track slot.
-
-  Range must advance with relative velocity between measurements. RELV_OBJ uses positive
-  values for an opening lead.
-  """
-  dist = round(min(max(d_rel, 0.), DIST_OBJ_MAX) / DIST_OBJ_SCALE)
-  relv = round(min(max(v_rel, -64.), 63.9375) / DIST_OBJ_SCALE) & 0x7ff
-  dat = bytearray(LEAD_TRACK_TEMPLATE)
-  dat[0] = dist >> 4
-  dat[1] = ((dist & 0xf) << 4) | (dat[1] & 0x0f)
-  dat[3] = relv >> 3
-  dat[4] = ((relv & 0x7) << 5) | (dat[4] & 0x1f)
-  return bytes(dat)
-
-
-def create_radar_frames(bus, counter, lead, g46l=False):
-  """lead is the (dRel, vRel) of the object to advertise on 0x364, or None for an empty slot."""
+def create_radar_frames(bus, counter, g46l=False):
   if g46l:
     return [CanData(G46L_RADAR_STATIC_MSG[0], G46L_RADAR_STATIC_MSG[1], bus)]
   frames = [CanData(RADAR_STATIC_MSG[0], RADAR_STATIC_MSG[1], bus)]
   for addr, dat in RADAR_TRACK_MSGS.items():
-    if lead is not None and addr == LEAD_TRACK_ADDR:
-      dat = create_lead_track(*lead)
     frames.append(CanData(addr, dat[:7] + bytes([(dat[7] & 0xf0) | (counter % 16)]), bus))
   return frames
 

@@ -34,7 +34,6 @@ CRZ_INFO = 0x21b
 CRZ_CTRL = 0x21c
 CAM_LKAS = 0x243
 CAM_LANEINFO = 0x440
-LEAD_TRACK = 0x364
 RADAR_STATIC = 0x499
 RADAR_UDS = 0x764
 
@@ -263,9 +262,9 @@ def packer() -> CANPacker:
   return CANPacker(DBC_NAME)
 
 
-def parse_frame(addr, dat, bus=0, msg=None) -> dict:
+def parse_frame(addr, dat, bus=0) -> dict:
   """The DBC's view of one frame, so a test can assert on signal values."""
-  msg = msg or MSG_NAMES.get(addr, addr)  # the radar tracks are addressed by id
+  msg = MSG_NAMES[addr]
   cp = CANParser(DBC_NAME, [(msg, float("nan"))], bus)
   cp.update([(0, [(addr, dat, bus)])])
   return dict(cp.vl[msg])
@@ -304,12 +303,6 @@ def crz_ctrl_lead(dat) -> tuple[int, int]:
   """(RADAR_HAS_LEAD, RADAR_LEAD_RELATIVE_DISTANCE) from a CRZ_CTRL frame."""
   v = parse_frame(CRZ_CTRL, dat)
   return int(v["RADAR_HAS_LEAD"]), int(v["RADAR_LEAD_RELATIVE_DISTANCE"])
-
-
-def lead_track(dat) -> tuple[float, float]:
-  """(DIST_OBJ, RELV_OBJ) decoded from a 0x364 track frame."""
-  v = parse_frame(LEAD_TRACK, dat)
-  return v["DIST_OBJ"], v["RELV_OBJ"]
 
 
 # fixtures

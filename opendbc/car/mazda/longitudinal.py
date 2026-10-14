@@ -7,22 +7,43 @@ See the LICENSE.md file in the root directory for more details.
 import numpy as np
 
 from opendbc.car import DT_CTRL, rate_limit
-from opendbc.car.mazda import mazdacan
 from opendbc.car.mazda.values import CarControllerParams
 
 # Stock body-latched releases use a RESUME_UNLATCHING pulse of 9 wire frames, the latched-family mode.
 RESUME_UNLATCH_LATCHED_FRAMES = int(0.18 / DT_CTRL)
 # Retry one unanswered body-latched release after this, the body still holding, then return control to the plan.
 RESUME_REPULSE_FRAMES = int(1.0 / DT_CTRL)
-# Debounce lead visibility before advertising a radar track.
-LEAD_DEBOUNCE_FRAMES = int(0.5 / DT_CTRL)
 # Debounce movement requests before releasing a standstill hold.
 RELEASE_DEBOUNCE_FRAMES = int(0.2 / DT_CTRL)
-# A plan must ask for more than this to open a hold: the e2e model drifts up to +0.19 at a stop
-# before its shouldStop lands, and every logged drive-off passes 0.25 within 1.1 s.
+# Arriving at a stop, the e2e plan drifts up to +0.11 for up to 0.4 s before its shouldStop lands,
+# always starting within 0.2 s of standstill. For RELEASE_SETTLE_FRAMES of standstill a hold opens
+# only above RELEASE_ACCEL; after that any sustained positive plan is a request to move, since a
+# gentle drive-off behind a creeping lead can peak at +0.11 (routes 4a3fe2b0e8aec968/0000006e,
+# 00000100 t+613). Keying this off longControlState instead releases on three arrival blips.
+RELEASE_SETTLE_FRAMES = int(1.0 / DT_CTRL)
 RELEASE_ACCEL = 0.25  # m/s^2
 # The still-stopped breakaway ramp gives up after this.
 BREAKAWAY_FRAMES = int(3.0 / DT_CTRL)
+# leadVisible toggles 2.3 times a minute while moving, half its runs under 0.6 s, mostly on a
+# marginal lead past 100 m. Showing it after 0.5 s and dropping it after 1.0 s leaves under one
+# change a minute (routes 25e-2c1, 4a3fe2b0e8aec968/0000006e).
+LEAD_SHOW_FRAMES = int(0.5 / DT_CTRL)
+LEAD_HIDE_FRAMES = int(1.0 / DT_CTRL)
+
+
+class LeadIcon:
+  """The dash lead icon: leadVisible once it has held long enough to stop it flickering."""
+
+  def __init__(self):
+    self.shown = False
+    self.frames = 0
+
+  def update(self, lead_visible: bool) -> bool:
+    self.frames = self.frames + 1 if lead_visible != self.shown else 0
+    if self.frames >= (LEAD_SHOW_FRAMES if lead_visible else LEAD_HIDE_FRAMES):
+      self.shown = lead_visible
+      self.frames = 0
+    return self.shown
 
 
 class StandstillHold:
@@ -44,6 +65,7 @@ class StandstillHold:
     self.just_released = False
     self.latched_frames = 0  # frames waiting for the body ECU to release its hold
     self.repulsed = False
+    self.standstill_frames = 0
 
   def update(self, long_engaged: bool, stopping: bool, standstill: bool,
              plan_accel: float, body_hold: bool, gas_pressed: bool) -> None:
@@ -53,9 +75,11 @@ class StandstillHold:
       return
 
     was_holding = self.holding
-    # Debounce plan movement requests: opening a hold takes RELEASE_ACCEL, keeping it open any
-    # positive plan. Driver throttle releases the hold immediately.
-    release_accel = RELEASE_ACCEL if was_holding else 0.
+    self.standstill_frames = self.standstill_frames + 1 if standstill else 0
+    # Debounce plan movement requests: opening a hold just after arriving takes RELEASE_ACCEL,
+    # otherwise any positive plan. Driver throttle releases the hold immediately.
+    settling = self.standstill_frames <= RELEASE_SETTLE_FRAMES
+    release_accel = RELEASE_ACCEL if was_holding and settling else 0.
     self.release_frames = self.release_frames + 1 if plan_accel > release_accel else 0
     plan_wants_go = self.release_frames >= RELEASE_DEBOUNCE_FRAMES
     # Keep STOPPING off once the plan or driver requests acceleration.
@@ -168,50 +192,3 @@ class AccelShaper:
         accel = min(max(accel, CarControllerParams.ACCEL_HOLD_LATCHED),
                     CarControllerParams.ACCEL_RESUME_PULSE_MAX)
     return accel
-
-
-class AdvertisedLead:
-  """Maintain consistent lead state across CRZ_CTRL and the 0x364 track.
-
-  Advertisement follows perception rather than engagement. Visibility is debounced and the
-  last measurement is propagated through short vision gaps like a radar track.
-  """
-
-  def __init__(self):
-    self.visible = False
-    self.flip_frames = 0
-    self.holding = False
-    self.lead = None
-    self._measured = None
-
-  def update(self, lead_visible: bool, d_rel: float, v_rel: float, holding: bool) -> None:
-    if lead_visible != self.visible:
-      self.flip_frames += 1
-      if self.flip_frames >= LEAD_DEBOUNCE_FRAMES:
-        self.visible = lead_visible
-        self.flip_frames = 0
-    else:
-      self.flip_frames = 0
-
-    if 0. < d_rel <= mazdacan.DIST_OBJ_MAX:
-      self._measured = (d_rel, v_rel)
-    elif not self.visible:
-      # Expire stale state after the debounce window.
-      self._measured = None
-    elif self._measured is not None:
-      # Propagate range through the gap instead of repeating a frozen track.
-      d, v = self._measured
-      self._measured = (d + v * DT_CTRL, v)
-    self.lead = self._measured if self.visible else None
-    self.holding = holding
-
-  @property
-  def has_lead(self) -> bool:
-    return self.lead is not None
-
-  @property
-  def ctrl_phase(self) -> int:
-    # Use stock's relative-distance buckets and keep all lead fields consistent.
-    if not self.has_lead:
-      return 0
-    return 3 if self.holding else 2

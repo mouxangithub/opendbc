@@ -11,10 +11,11 @@ RESUME_UNLATCHING pulse, the breakaway ramp, the gas override and the disengaged
 import pytest
 
 from opendbc.car import DT_CTRL
-from opendbc.car.mazda.longitudinal import (BREAKAWAY_FRAMES, RELEASE_DEBOUNCE_FRAMES, RESUME_REPULSE_FRAMES,
-                                            RESUME_UNLATCH_LATCHED_FRAMES)
+from opendbc.car.mazda import mazdacan
+from opendbc.car.mazda.longitudinal import (BREAKAWAY_FRAMES, LEAD_HIDE_FRAMES, LEAD_SHOW_FRAMES, RELEASE_DEBOUNCE_FRAMES,
+                                            RESUME_REPULSE_FRAMES, RESUME_UNLATCH_LATCHED_FRAMES, LeadIcon)
 from opendbc.car.mazda.tests.conftest import (CRZ_CTRL, CRZ_INFO, RADAR_STATIC, RADAR_UDS, LongCtrlState, accel_cmd_raw,
-                                              crz_info, frame, parse_frame, step_long)
+                                              crz_ctrl_lead, crz_info, frame, parse_frame, step_long)
 from opendbc.car.mazda.values import CarControllerParams
 
 STOPPING = LongCtrlState.stopping
@@ -87,6 +88,39 @@ def test_gap_setting_mirrors_driver(cc, cs, bars, wire):
   cc.frame = 0  # force emission on the first step
   sends = step_long(cc, cs, gap=bars)
   assert parse_frame(CRZ_CTRL, frame(sends, CRZ_CTRL))["DISTANCE_SETTING"] == wire
+
+
+@pytest.mark.parametrize("lead_visible", [True, False])
+@pytest.mark.parametrize("kwargs, bucket", [
+  (dict(accel=0.5), 2),
+  (dict(long_state=STOPPING, accel=-1.024, standstill=True), 3),
+  (dict(enabled=False, long_active=False, accel=0., long_state=OFF), 2),
+], ids=["following", "stopped", "disengaged"])
+def test_lead_shows_on_the_dash_but_not_in_the_tracks(cc, cs, kwargs, bucket, lead_visible):
+  # CRZ_CTRL carries the vision lead for the cluster; the tracks stay the stock empty capture.
+  cc.lead_icon.shown = lead_visible  # past the debounce, covered on its own below
+  cc.frame = 0  # force emission
+  sends = step_long(cc, cs, lead_visible=lead_visible, **kwargs)
+  for bus in (0, 2):
+    assert crz_ctrl_lead(frame(sends, CRZ_CTRL, bus)) == ((1, bucket) if lead_visible else (0, 0))
+    for addr, capture in mazdacan.RADAR_TRACK_MSGS.items():
+      assert frame(sends, addr, bus)[:7] == capture[:7], f"{addr:#x} left the empty capture"
+
+
+def test_lead_icon_rides_out_flicker():
+  icon = LeadIcon()
+
+  def run(visible, n):
+    return [icon.update(visible) for _ in range(n)]
+
+  # a marginal lead flickering just inside the show debounce never reaches the dash
+  for _ in range(5):
+    assert not any(run(True, LEAD_SHOW_FRAMES - 1) + run(False, 1))
+  assert run(True, LEAD_SHOW_FRAMES) == [False] * (LEAD_SHOW_FRAMES - 1) + [True]
+  # dropouts just inside the hide debounce keep it
+  for _ in range(5):
+    assert all(run(False, LEAD_HIDE_FRAMES - 1) + run(True, 1))
+  assert run(False, LEAD_HIDE_FRAMES) == [True] * (LEAD_HIDE_FRAMES - 1) + [False]
 
 
 def test_stop_emits_hold_then_relaxes(cc, cs):

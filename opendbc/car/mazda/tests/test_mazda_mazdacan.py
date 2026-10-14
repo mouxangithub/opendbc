@@ -11,7 +11,7 @@ import pytest
 
 from opendbc.car.mazda import mazdacan
 from opendbc.car.mazda.values import Buttons
-from opendbc.car.mazda.tests.conftest import CAM_LANEINFO, LEAD_TRACK, car_params, hands_code, parse_frame
+from opendbc.car.mazda.tests.conftest import CAM_LANEINFO, car_params, hands_code, parse_frame
 
 
 def crz_info_reference_checksum(dat):
@@ -112,31 +112,31 @@ def test_crz_info_accel_encoding_and_checksum(packer, stopping, unlatching):
     assert dat[7] == crz_info_reference_checksum(bytes(bare))
 
 
-@pytest.mark.parametrize("long_active, acc_available, gap, has_lead, phase, acc_active_2, expected", [
-  (False, False, 0, False, 0, False, "0201010000000000"),  # standby
-  (False, True, 2, False, 0, False, "02010b0000000000"),   # MRCC armed, SET allowed
-  (True, True, 2, True, 1, True, "0a018b2000001000"),      # engaged, cruise, no lead
-  (True, True, 2, True, 2, True, "0a018b4000001000"),      # engaged, following a lead
-  (True, True, 2, True, 3, True, "0a018b6000001000"),      # stop-and-go hold (near phase)
-  (True, True, 2, True, 4, True, "0a018b8000001000"),      # stop-and-go hold (far phase)
-  (True, True, 2, True, 3, False, "0a018b6000000000"),     # relaxed hold, ACC_ACTIVE_2 drops
-  (True, True, 1, True, 2, True, "0a01874000001000"),      # wire gap 1 (4 bars on the cluster)
+@pytest.mark.parametrize("long_active, acc_available, gap, lead_distance, acc_active_2, expected", [
+  (False, False, 0, 0, False, "0201010000000000"),  # standby
+  (False, True, 2, 0, False, "02010b0000000000"),   # MRCC armed, SET allowed
+  (False, True, 2, 2, False, "02018b4000000000"),   # MRCC armed, lead ahead
+  (True, True, 2, 0, True, "0a010b0000001000"),     # engaged, no lead
+  (True, True, 2, 2, True, "0a018b4000001000"),     # engaged, following a lead
+  (True, True, 2, 3, True, "0a018b6000001000"),     # stopped behind a lead
+  (True, True, 2, 3, False, "0a018b6000000000"),    # relaxed hold, ACC_ACTIVE_2 drops
+  (True, True, 1, 2, True, "0a01874000001000"),     # wire gap 1 (4 bars on the cluster)
 ])
-def test_crz_ctrl_golden_bytes(packer, long_active, acc_available, gap, has_lead, phase, acc_active_2, expected):
-  dat = mazdacan.create_crz_ctrl(packer, 0, long_active, acc_available, gap, has_lead, phase, acc_active_2)[1]
+def test_crz_ctrl_golden_bytes(packer, long_active, acc_available, gap, lead_distance, acc_active_2, expected):
+  dat = mazdacan.create_crz_ctrl(packer, 0, long_active, acc_available, gap, acc_active_2,
+                                 lead_distance=lead_distance)[1]
   assert dat.hex() == expected
 
 
-@pytest.mark.parametrize("long_active, acc_available, gap, has_lead, phase, acc_active_2, expected", [
-  (False, False, 0, False, 0, False, "0221010000000000"),  # standby: the stock radar's frame
-  (False, True, 2, False, 0, False, "02210b0000000000"),   # MRCC armed
-  (True, True, 2, True, 1, True, "0a218b2000001000"),      # engaged
+@pytest.mark.parametrize("long_active, acc_available, gap, acc_active_2, expected", [
+  (False, False, 0, False, "0221010000000000"),  # standby: the stock radar's frame
+  (False, True, 2, False, "02210b0000000000"),   # MRCC armed
+  (True, True, 2, True, "0a210b0000001000"),     # engaged
 ])
-def test_crz_ctrl_relays_hbc_arming(packer, long_active, acc_available, gap, has_lead, phase, acc_active_2, expected):
-  dat = mazdacan.create_crz_ctrl(packer, 0, long_active, acc_available, gap, has_lead, phase, acc_active_2,
-                                 hbc_request=True)[1]
+def test_crz_ctrl_relays_hbc_arming(packer, long_active, acc_available, gap, acc_active_2, expected):
+  dat = mazdacan.create_crz_ctrl(packer, 0, long_active, acc_available, gap, acc_active_2, hbc_request=True)[1]
   assert dat.hex() == expected
-  bare = mazdacan.create_crz_ctrl(packer, 0, long_active, acc_available, gap, has_lead, phase, acc_active_2)[1]
+  bare = mazdacan.create_crz_ctrl(packer, 0, long_active, acc_available, gap, acc_active_2)[1]
   assert bytes(a ^ b for a, b in zip(dat, bare, strict=True)) == bytes([0, 0x20, 0, 0, 0, 0, 0, 0])
 
 
@@ -151,44 +151,19 @@ def test_radar_frames_match_stock():
     (0x366, "fff7fe7ffbff3fc0"),
   ]
   for bus in (0, 2):
-    frames = mazdacan.create_radar_frames(bus, 0, None)
-    assert [(f.address, f.dat.hex()) for f in frames] == expected
+    frames = mazdacan.create_radar_frames(bus, 0)
+    assert [(f.address, f.dat.hex(), f.src) for f in frames] == [(a, d, bus) for a, d in expected]
 
 
-def test_radar_frames_counter_and_lead_track():
-  frames = mazdacan.create_radar_frames(2, 15, (10.25, 0.))
-  assert all(f.src == 2 for f in frames)
-  # counter stamps the low nibble of the last byte on every track
-  assert [f.dat[7] & 0x0f for f in frames[1:]] == [15] * 6
-  tracks = {f.address: f.dat.hex() for f in frames}
-  assert tracks[0x364] == "0a4e00001c00000f"
+def test_radar_frames_stamp_only_the_counter():
+  frames = mazdacan.create_radar_frames(2, 15)
+  base = mazdacan.create_radar_frames(2, 0)
+  assert frames[0] == base[0], "the static frame carries no counter"
+  for f, b in zip(frames[1:], base[1:], strict=True):
+    assert f.dat[7] & 0x0f == 15
+    assert f.dat[:7] + bytes([f.dat[7] & 0xf0]) == b.dat
 
 
 def test_g46l_radar_frames_are_the_static_capture_alone():
-  # the G46L never sends track messages, lead or not: the lead rides CRZ_CTRL alone
-  for lead in (None, (10.25, 0.)):
-    frames = mazdacan.create_radar_frames(0, 15, lead, g46l=True)
-    assert [(f.address, f.dat.hex(), f.src) for f in frames] == [(0x499, "0098400000000000", 0)]
-
-
-def test_lead_track_constant_bytes_match_the_stock_release_capture():
-  # the template's measurement fields are zeroed, so a zero-range lead reproduces it exactly
-  assert mazdacan.create_lead_track(0., 0.) == mazdacan.LEAD_TRACK_TEMPLATE
-  # Preserve the camera's occupied-slot status bytes.
-  assert mazdacan.LEAD_TRACK_TEMPLATE[4] & 0x1f == 0x1c
-  assert mazdacan.LEAD_TRACK_TEMPLATE[5] == 0x00
-
-
-@pytest.mark.parametrize("d_rel, v_rel", [
-  (0., 0.), (6.5, 1.5), (10.25, -2.0), (29.4, 2.9375), (255.875, 63.9375), (400., 100.), (5., -80.),
-])
-def test_lead_track_round_trips_through_the_dbc(d_rel, v_rel):
-  dat = mazdacan.create_lead_track(d_rel, v_rel)
-  vl = parse_frame(LEAD_TRACK, dat)
-  assert vl["DIST_OBJ"] == pytest.approx(min(max(d_rel, 0.), 255.875), abs=0.0625)
-  assert vl["RELV_OBJ"] == pytest.approx(min(max(v_rel, -64.), 63.9375), abs=0.0625)
-  # the bits outside the two fields we drive stay exactly as captured
-  assert dat[1] & 0x0f == mazdacan.LEAD_TRACK_TEMPLATE[1] & 0x0f
-  assert dat[2] == mazdacan.LEAD_TRACK_TEMPLATE[2]
-  assert dat[4] & 0x1f == mazdacan.LEAD_TRACK_TEMPLATE[4] & 0x1f
-  assert dat[5:] == mazdacan.LEAD_TRACK_TEMPLATE[5:]
+  frames = mazdacan.create_radar_frames(0, 15, g46l=True)
+  assert [(f.address, f.dat.hex(), f.src) for f in frames] == [(0x499, "0098400000000000", 0)]

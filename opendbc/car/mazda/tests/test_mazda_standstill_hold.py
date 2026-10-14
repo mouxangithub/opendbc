@@ -10,8 +10,8 @@ debounce, the RESUME_UNLATCHING pulse and its one retry.
 import pytest
 
 from opendbc.car import DT_CTRL
-from opendbc.car.mazda.longitudinal import (RELEASE_ACCEL, RELEASE_DEBOUNCE_FRAMES, RESUME_REPULSE_FRAMES, RESUME_UNLATCH_LATCHED_FRAMES,
-                                            StandstillHold)
+from opendbc.car.mazda.longitudinal import (RELEASE_ACCEL, RELEASE_DEBOUNCE_FRAMES, RELEASE_SETTLE_FRAMES, RESUME_REPULSE_FRAMES,
+                                            RESUME_UNLATCH_LATCHED_FRAMES, StandstillHold)
 
 
 def drive(sm, frames, **kwargs):
@@ -106,22 +106,32 @@ def test_hold_comes_back_if_the_plan_changes_its_mind():
   assert sm.holding
   assert not sm.resume_unlatching and sm.unlatch_frames == 0
   assert sm.stop_bits
-  # re-held, it needs a real request again
-  drive(sm, int(2.0 / DT_CTRL), standstill=True, plan_accel=0.1)
-  assert sm.holding
+  # re-held long after arriving, a sustained gentle plan is a request again
+  drive(sm, RELEASE_DEBOUNCE_FRAMES, standstill=True, plan_accel=0.1)
+  assert not sm.holding
 
 
 @pytest.mark.parametrize("body_hold", [False, True])
-def test_sub_threshold_plan_never_opens_the_hold(body_hold):
+def test_sub_threshold_plan_while_arriving_keeps_the_hold(body_hold):
   sm = StandstillHold()
-  # the e2e model drifts positive at a stop before its own shouldStop lands; however long it
-  # lasts, it is not a request to move
+  # the e2e model drifts positive as the car arrives at a stop, before its own shouldStop lands;
+  # through the settle window that is not a request to move
   drive(sm, 1, stopping=True)
-  drive(sm, 100, stopping=True, standstill=True, body_hold=body_hold)
-  drive(sm, int(3.0 / DT_CTRL), standstill=True, body_hold=body_hold,
-        plan_accel=RELEASE_ACCEL - 0.01)
+  drive(sm, RELEASE_SETTLE_FRAMES, standstill=True, body_hold=body_hold, plan_accel=RELEASE_ACCEL - 0.01)
   assert sm.holding and not sm.just_released and not sm.resume_unlatching
   assert sm.stop_bits != body_hold
+
+
+@pytest.mark.parametrize("body_hold", [False, True])
+def test_gentle_drive_off_after_settling_opens_the_hold(body_hold):
+  sm = StandstillHold()
+  # route 4a3fe2b0e8aec968/0000006e t+1394: 35 s into a stop the lead pulls away at +1 m/s and the
+  # plan asks +0.17 for 0.44 s. Under a 0.25 threshold the hold never opened and the driver used gas
+  drive(sm, 1, stopping=True)
+  drive(sm, RELEASE_SETTLE_FRAMES + 1, stopping=True, standstill=True, body_hold=body_hold)
+  drive(sm, RELEASE_DEBOUNCE_FRAMES, standstill=True, body_hold=body_hold, plan_accel=0.17)
+  assert not sm.holding and sm.just_released
+  assert sm.resume_unlatching == body_hold
 
 
 def test_route_27b_arrival_blip_keeps_the_hold():
