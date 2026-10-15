@@ -10,6 +10,8 @@
 #define MAZDA_CRZ_BTNS      0x09dU
 // Physical TJA button, DBC start bit 11 (byte 1, bit 3); trims without the button hold it low.
 #define MAZDA_TJA_BUTTON_BIT 11U
+// MRCC ON intent (MODE_Y), DBC start bit 13; the KE's OFF button sets only MODE_X.
+#define MAZDA_MODE_Y_BIT 13U
 // sunnypilot safety param: the TJA button is the MADS lateral switch
 #define MAZDA_PARAM_SP_TJA_BUTTON 1U
 #define MAZDA_RADAR_STATIC  0x499U
@@ -119,9 +121,11 @@ static void mazda_rx_hook(const CANPacket_t *msg) {
       }
     }
 
-    if ((msg->addr == MAZDA_CRZ_BTNS) && mazda_tja_button) {
-      // The physical TJA button is the MADS lateral switch, so lateral no longer follows MRCC.
-      mads_button_press = GET_BIT(msg, MAZDA_TJA_BUTTON_BIT) ? MADS_BUTTON_PRESSED : MADS_BUTTON_NOT_PRESSED;
+    if (msg->addr == MAZDA_CRZ_BTNS) {
+      // TJA-declared cars keep their own lateral switch. Otherwise ON rearms lateral in standby,
+      // since a main that stayed on through boot can expire before selfdrived is ready.
+      bool lateral_button = mazda_tja_button ? GET_BIT(msg, MAZDA_TJA_BUTTON_BIT) : (acc_main_on && GET_BIT(msg, MAZDA_MODE_Y_BIT));
+      mads_button_press = lateral_button ? MADS_BUTTON_PRESSED : MADS_BUTTON_NOT_PRESSED;
     }
 
     if ((msg->addr == MAZDA_CRZ_BTNS) && mazda_longitudinal) {

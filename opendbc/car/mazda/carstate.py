@@ -395,6 +395,7 @@ class CarState(CarStateBase, MadsCarState, CarStateExt):
       # A held press of this button must freeze ICBM through the cruise button timers in the openpilot tree.
       *create_button_events(self.mrcc_button, self.prev_mrcc_button, {1: ButtonType.mainCruise}),
       *create_button_events(self.tja_button, self.prev_tja_button, {1: ButtonType.lkas}),
+      *self.main_on_lkas_events(ret, btns),
     ]
 
     CarStateExt.update(self, ret, ret_sp, can_parsers)

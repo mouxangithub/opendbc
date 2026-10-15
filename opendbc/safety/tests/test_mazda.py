@@ -490,8 +490,8 @@ class MazdaTjaButtonBase(unittest.TestCase):
   def _crz_ctrl(self, main_on):
     return self.packer.make_can_msg_safety("CRZ_CTRL", 0, {"CRZ_AVAILABLE": main_on})
 
-  def _pedals(self, acc_off):
-    return self.packer.make_can_msg_safety("PEDALS", 0, {"ACC_OFF": acc_off})
+  def _pedals(self, acc_off, brake=False):
+    return self.packer.make_can_msg_safety("PEDALS", 0, {"ACC_OFF": acc_off, "BRAKE_ON": brake})
 
 
 class TestMazdaTjaMads(MazdaTjaButtonBase):
@@ -510,7 +510,7 @@ class TestMazdaTjaMads(MazdaTjaButtonBase):
   def test_undeclared_keeps_mrcc_path_and_ignores_the_bit(self):
     self.safety.safety_rx_hook(self._btns(True))
     self.safety.safety_rx_hook(self._btns(False))
-    self.assertEqual(-1, self.safety.get_mads_button_press())  # UNAVAILABLE
+    self.assertEqual(0, self.safety.get_mads_button_press())  # NOT_PRESSED
     self.assertFalse(self.safety.get_controls_allowed_lateral())
 
     self.safety.safety_rx_hook(self._crz_ctrl(True))
@@ -568,6 +568,81 @@ class TestMazdaTjaMads(MazdaTjaButtonBase):
     self._init(tja_button=False)
     self.safety.safety_rx_hook(self._crz_ctrl(True))
     self.assertTrue(self.safety.get_acc_main_on())
+
+
+class TestMazdaMainOnMads(MazdaTjaButtonBase):
+  def _btns(self, on=False, off=False, bus=0):
+    return self.packer.make_can_msg_safety("CRZ_BTNS", bus, {"MODE_Y": on, "MODE_X": off})
+
+  def _main(self, on, longitudinal):
+    return self._pedals(on) if longitudinal else self._crz_ctrl(on)
+
+  def _standby(self, longitudinal=False, tja=False):
+    self._init(tja_button=tja, param=MazdaSafetyFlags.LONG if longitudinal else 0)
+    self.safety.safety_rx_hook(self._main(True, longitudinal))
+    self.safety.safety_rx_hook(self._btns())
+    # The boot-time main edge expires before selfdrived sends an engaged heartbeat.
+    self._expire_lateral()
+
+  def _expire_lateral(self):
+    self.safety.set_heartbeat_engaged_mads(False)
+    for _ in range(3):
+      self.safety.mads_heartbeat_engaged_check()
+    self.assertFalse(self.safety.get_controls_allowed_lateral())
+
+  def test_on_rearms_standby_without_engaging_cruise(self):
+    for longitudinal in (False, True):
+      with self.subTest(longitudinal=longitudinal):
+        self._standby(longitudinal)
+        self.safety.safety_rx_hook(self._btns(on=True))
+        self.assertTrue(self.safety.get_controls_allowed_lateral())
+        self.assertFalse(self.safety.get_controls_allowed())
+        self.assertTrue(self.safety.get_acc_main_on())
+        self.safety.safety_rx_hook(self._btns())
+        for _ in range(DEBOUNCE if longitudinal else 1):
+          self.safety.safety_rx_hook(self._main(False, longitudinal))
+        self.assertFalse(self.safety.get_controls_allowed_lateral())
+
+  def test_held_on_does_not_rearm_after_heartbeat_exit(self):
+    self._standby()
+    self.safety.safety_rx_hook(self._btns(on=True))
+    self._expire_lateral()
+    self.safety.safety_rx_hook(self._btns(on=True))
+    self.assertFalse(self.safety.get_controls_allowed_lateral())
+    self.safety.safety_rx_hook(self._btns())
+    self.safety.safety_rx_hook(self._btns(on=True))
+    self.assertTrue(self.safety.get_controls_allowed_lateral())
+
+  def test_off_and_camera_bus_do_not_rearm(self):
+    self._standby()
+    for msg in (self._btns(off=True), self._btns(), self._btns(on=True, bus=2)):
+      self.safety.safety_rx_hook(msg)
+      self.assertFalse(self.safety.get_controls_allowed_lateral())
+
+  def test_requires_main_on_and_mads_enabled(self):
+    self.safety.safety_rx_hook(self._crz_ctrl(False))
+    self.safety.safety_rx_hook(self._btns(on=True))
+    self.assertFalse(self.safety.get_controls_allowed_lateral())
+    self._standby()
+    self.safety.set_mads_params(False, False, False)
+    self.safety.safety_rx_hook(self._btns(on=True))
+    self.assertFalse(self.safety.get_controls_allowed_lateral())
+
+  def test_declared_tja_ignores_on(self):
+    self._standby(tja=True)
+    self.safety.safety_rx_hook(self._btns(on=True))
+    self.assertFalse(self.safety.get_controls_allowed_lateral())
+
+  def test_pause_on_brake_keeps_request_until_release(self):
+    self._standby()
+    self.safety.set_mads_params(True, False, True)
+    self.safety.safety_rx_hook(self._crz_ctrl(True))
+    self.safety.safety_rx_hook(self._pedals(False, brake=True))
+    self.safety.safety_rx_hook(self._btns(on=True))
+    self.assertFalse(self.safety.get_controls_allowed_lateral())
+    self.assertTrue(self.safety.get_controls_requested_lateral())
+    self.safety.safety_rx_hook(self._pedals(False))
+    self.assertTrue(self.safety.get_controls_allowed_lateral())
 
 
 class TestMazdaIgnition(unittest.TestCase):

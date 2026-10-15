@@ -8,12 +8,18 @@ See the LICENSE.md file in the root directory for more details.
 from enum import StrEnum
 
 from opendbc.can.parser import CANParser
-from opendbc.car import Bus, DT_CTRL, structs
+from opendbc.car import Bus, DT_CTRL, create_button_events, structs
+from opendbc.safety import ALTERNATIVE_EXPERIENCE
 from opendbc.sunnypilot.car.mazda.icbm import BUTTONS
 from opendbc.sunnypilot.car.mazda.values import MazdaFlagsSP
 from opendbc.sunnypilot.mads_base import MadsCarStateBase
 
 VisualAlert = structs.CarControl.HUDControl.VisualAlert
+ButtonType = structs.CarState.ButtonEvent.Type
+
+# The ON shortcut becomes a toggle event only after disabled standby has settled.
+# The same window rejects feedback that the control loop has stopped refreshing.
+MADS_ON_STANDBY_FRAMES = round(0.5 / DT_CTRL)
 
 TJA_MRCC_MAX_TX_FRAMES = 3
 TJA_MRCC_RAW_OFF_CONFIRM_FRAMES = 5
@@ -246,6 +252,41 @@ class MadsCarState(MadsCarStateBase):
     self.mrcc_button = 0
     self.prev_mrcc_button = 0
     self.crz_btns_seen = False
+    self.mads_available = False
+    self.mads_enabled = False
+    self.mads_feedback_age = MADS_ON_STANDBY_FRAMES
+    self.mads_standby_frames = 0
+    self.main_on_button = False
+    self.main_on_lkas_button = False
+    self.prev_main_on_lkas_button = False
+
+  def update_mads_feedback(self, CC: structs.CarControl, CC_SP: structs.CarControlSP) -> None:
+    self.mads_available = CC_SP.mads.available
+    self.mads_enabled = CC_SP.mads.enabled or CC_SP.mads.active or CC.latActive
+    self.mads_feedback_age = 0
+
+  def main_on_lkas_events(self, ret: structs.CarState, btns) -> list[structs.CarState.ButtonEvent]:
+    self.mads_feedback_age = min(self.mads_feedback_age + 1, MADS_ON_STANDBY_FRAMES)
+    on_pressed = btns["MODE_Y"] == 1
+    brake_restricted = self.CP.alternativeExperience & (ALTERNATIVE_EXPERIENCE.MADS_DISENGAGE_LATERAL_ON_BRAKE |
+                                                       ALTERNATIVE_EXPERIENCE.MADS_PAUSE_LATERAL_ON_BRAKE)
+    standby = (not self.CP_SP.flags & MazdaFlagsSP.TJA_BUTTON and self.mads_available and not self.mads_enabled and
+               self.mads_feedback_age < MADS_ON_STANDBY_FRAMES and ret.cruiseState.available and self.out.cruiseState.available and
+               not self.cruise_enabled and not self.out.cruiseState.enabled and
+               not (self.cancel_button or self.resume_button or self.accel_button or self.decel_button) and
+               not (brake_restricted and (ret.brakePressed or ret.regenBraking)))
+    self.mads_standby_frames = min(self.mads_standby_frames + 1, MADS_ON_STANDBY_FRAMES) if standby else 0
+
+    self.prev_main_on_lkas_button = self.main_on_lkas_button
+    if not on_pressed:
+      self.main_on_lkas_button = False
+    elif not self.main_on_button and self.mads_standby_frames >= MADS_ON_STANDBY_FRAMES:
+      # The shared MADS handler toggles on a pressed LKAS event. Emit once, only
+      # from settled disabled standby, then wait for feedback before another request.
+      self.main_on_lkas_button = True
+      self.mads_standby_frames = 0
+    self.main_on_button = on_pressed
+    return create_button_events(self.main_on_lkas_button, self.prev_main_on_lkas_button, {True: ButtonType.lkas})
 
   def update_mads(self, ret: structs.CarState, can_parsers: dict[StrEnum, CANParser]) -> None:
     cp = can_parsers[Bus.pt]
