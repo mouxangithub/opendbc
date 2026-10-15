@@ -21,11 +21,11 @@ ONSET_T_BP = [0.0, 0.15, 0.6]  # s
 # 80 km/h, which stays as it was. The planner's light-onset margin (long_mpc) supplies the extra distance.
 # Driver 2026-10-05, same drive: "at 40-50 km/h the build from light to firm is still not smooth, a bit abrupt" -> the
 # jerk the onset ramps UP TO is also scheduled: 2.0 m/s^3 up to 60 km/h (was the stock 4.0 from 0.9 s on), stock at 80.
-ONSET_V_BP = [16.7, 22.2]  # m/s (60, 80 km/h)
-ONSET_T1_V = [0.3, 0.1]
-ONSET_T3_V = [0.9, 0.4]
-ONSET_J1_V = [0.3, 1.0]  # m/s^3 during the first phase
-ONSET_J3_V = [2.0, 4.0]  # m/s^3 the ramp ends at (the shaper never exceeds the stock limit)
+ONSET_V_BP = [2.8, 6.9, 16.7, 22.2]  # m/s (10, 25, 60, 80 km/h)
+ONSET_T1_V = [0.3, 0.3, 0.3, 0.1]
+ONSET_T3_V = [0.9, 1.2, 1.2, 0.4]
+ONSET_J1_V = [0.3, 0.3, 0.3, 1.0]  # m/s^3 during the first phase
+ONSET_J3_V = [2.0, 1.5, 1.5, 4.0]  # m/s^3 the ramp ends at (the shaper never exceeds the stock limit)
 ONSET_J_DOWN = [1.0, 1.0, 4.0]  # m/s^3 (reference shape; the first two entries follow ONSET_J1_V)
 # Engaging ACC (SET-) while creeping up to a lead (driver 2026-10-04: "the car used to brake hard the moment I press
 # SET-; the first ~0.2 s must be a light touch, then blend into the decel the speed needs"). Route 000000ee 11:48:07:
@@ -314,11 +314,13 @@ class BrakeOvershootLimiter:
     self.moderate = moderate  # also the moderate band (OVERSHOOT_MOD_*)
     self.lift = 0.0
     self.in_moderate = False
+    self.mod_lift = False
     self.mod_excess = 0.0
 
   def reset(self) -> None:
     self.lift = 0.0
     self.in_moderate = False
+    self.mod_lift = False
     self.mod_excess = 0.0
 
   def update(self, accel_request: float, a_ego_future: float, active: bool = True, v_ego: float = 0.0,
@@ -338,17 +340,20 @@ class BrakeOvershootLimiter:
       target = float(np.clip(OVERSHOOT_GAIN * excess, 0.0, OVERSHOOT_MAX))
     elif active and self.in_moderate:
       target = float(np.clip(OVERSHOOT_GAIN * (self.mod_excess - OVERSHOOT_MOD_DEADBAND), 0.0, OVERSHOOT_MAX))
-    if self.in_moderate and not hard:
+    self.mod_lift = (self.in_moderate or self.mod_lift) and not hard
+    if self.mod_lift:
       step = OVERSHOOT_MOD_RATE * self.dt
       self.lift = float(np.clip(target, self.lift - step, self.lift + step))
     else:
       self.lift = float(np.clip(target, self.lift - OVERSHOOT_RATE_DOWN * self.dt, self.lift + OVERSHOOT_RATE_UP * self.dt))
+    if self.lift <= 0.0:
+      self.mod_lift = False
     return self.lift
 
   def apply(self, accel_cmd: float) -> float:
     if self.lift <= 0.0:
       return accel_cmd
-    ceiling = OVERSHOOT_MOD_KEEP * accel_cmd if self.in_moderate else OVERSHOOT_CMD_CEIL
+    ceiling = OVERSHOOT_MOD_KEEP * accel_cmd if self.in_moderate or self.mod_lift else OVERSHOOT_CMD_CEIL
     return min(accel_cmd + self.lift, max(accel_cmd, ceiling))
 
 
@@ -414,23 +419,12 @@ class BrakeHandoverFeedforward:
   def apply(self, accel_cmd: float) -> float:
     return accel_cmd - self.extra
 
-  def condition_pid(self, pid, accel_request: float, v_ego: float, error_future: float | None = None) -> bool:
-    """below PID_HOLD_V while braking: keep the integrator from winding up; True = freeze it this step.
-
-    A positive integral while braking is not always a gas integral left from a launch: when the
-    PCM brakes harder than the request (firm stops: asked -2.0, delivered -2.15) the loop winds
-    the integral POSITIVE to lift the command and match the car. Dropping that trim (bleeding a
-    positive integral to zero at PID_BLEED_POS) took the brake back at once - a 2 m/s^3 step at
-    9 km/h, the "hits a firm brake" jolt at low speed. So it is only bled when the car is no
-    longer over-delivering (error_future < 0, the genuine launch leftover); while the loop is
-    still over-delivering the trim is held. A negative integral is the catch-up wound up during
-    the regen hand-over dip and is always bled, so it does not add braking at the end of the stop.
-    """
+  def condition_pid(self, pid, accel_request: float, v_ego: float) -> bool:
+    """below PID_HOLD_V while braking: bleed the integrator toward zero; returns True = freeze it this step"""
     if v_ego >= PID_HOLD_V or accel_request >= 0.0:
       return False
     if pid.i > 0.0:
-      if error_future is None or error_future < 0.0:
-        pid.i = max(0.0, pid.i - PID_BLEED_POS * self.dt)
+      pid.i = max(0.0, pid.i - PID_BLEED_POS * self.dt)
     else:
       pid.i = min(0.0, pid.i + PID_BLEED_NEG * self.dt)
     return True
@@ -456,6 +450,6 @@ class BrakeCommandCorrections:
     self.handover.update(accel_request, v_ego, active=not fcw)
     return self.handover.apply(accel_cmd)
 
-  def condition_pid(self, pid, accel_request: float, v_ego: float, error_future: float | None = None) -> bool:
+  def condition_pid(self, pid, accel_request: float, v_ego: float) -> bool:
     """called before the stock PID update; True = freeze the integrator this step"""
-    return self.handover.condition_pid(pid, accel_request, v_ego, error_future)
+    return self.handover.condition_pid(pid, accel_request, v_ego)
