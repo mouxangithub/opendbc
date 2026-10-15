@@ -1,17 +1,43 @@
 import copy
+from enum import IntEnum
+import importlib
 
 from opendbc.can import CANDefine, CANParser
+from opendbc.can.dbc import DBC as DBCParser
 from opendbc.car import Bus, DT_CTRL, create_button_events, structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.common.filter_simple import FirstOrderFilter
 from opendbc.car.interfaces import CarStateBase
 from opendbc.car.toyota.values import ToyotaFlags, CAR, DBC, STEER_THRESHOLD, NO_STOP_TIMER_CAR, \
-                                                  TSS2_CAR, EPS_SCALE
+                                                  TSS2_CAR, EPS_SCALE, CanBus
 from opendbc.sunnypilot.car.toyota.carstate_ext import CarStateExt
+from opendbc.sunnypilot.car.toyota.enhanced_bsm import EnhancedBsmCarState
 from opendbc.sunnypilot.car.toyota.values import ToyotaFlagsSP
 
 ButtonType = structs.CarState.ButtonEvent.Type
 SteerControlType = structs.CarParams.SteerControlType
+
+
+class AccelPersonality(IntEnum):
+  eco = 0
+  normal = 1
+  sport = 2
+
+
+def get_accel_personality(sport_mode: int, eco_mode: int) -> AccelPersonality:
+  if sport_mode == 1:
+    return AccelPersonality.sport
+  if eco_mode == 1:
+    return AccelPersonality.eco
+  return AccelPersonality.normal
+
+
+def get_host_params():
+  """Return sunnypilot's Params store when opendbc is embedded in openpilot."""
+  try:
+    return importlib.import_module("openpilot.common.params").Params()
+  except ModuleNotFoundError:
+    return None
 
 # These steering fault definitions seem to be common across LKA (torque) and LTA (angle):
 # - high steer rate fault: goes to 21 or 25 for 1 frame, then 9 for 2 seconds
@@ -34,7 +60,7 @@ class CarState(CarStateBase, CarStateExt):
     self.cluster_speed_hyst_gap = CV.KPH_TO_MS / 2.
     self.cluster_min_speed = CV.KPH_TO_MS / 2.
 
-    if CP.flags & ToyotaFlags.SECOC.value:
+    if CP.flags & ToyotaFlags.SECOC.value and CP.carFingerprint not in (CAR.LEXUS_ES_PATCHED,):
       self.shifter_values = can_define.dv["GEAR_PACKET_HYBRID"]["GEAR"]
     else:
       self.shifter_values = can_define.dv["GEAR_PACKET"]["GEAR"]
@@ -55,6 +81,21 @@ class CarState(CarStateBase, CarStateExt):
     self.gvc = 0.0
     self.secoc_synchronization = None
 
+    self.enhanced_bsm = EnhancedBsmCarState(CP, CP_SP)
+
+    if CP_SP.flags & ToyotaFlagsSP.SP_AUTO_BRAKE_HOLD:
+      self.pre_collision_2 = {}
+    self.brake_force = float('nan')
+    self._host_params = get_host_params()
+    self.toyota_drive_mode = self._host_params is not None and self._host_params.get_bool('ToyotaDriveMode')
+    self._drive_mode_signals_checked = False
+    self._sport_signal_available = False
+    self._eco_signal_available = False
+    self._prev_accel_profile = None
+    self._accel_profile_init = False
+
+    self.frame = 0
+
   def update(self, can_parsers) -> tuple[structs.CarState, structs.CarStateSP]:
     cp = can_parsers[Bus.pt]
     cp_cam = can_parsers[Bus.cam]
@@ -72,17 +113,49 @@ class CarState(CarStateBase, CarStateExt):
     ret.parkingBrake = cp.vl["BODY_CONTROL_STATE"]["PARKING_BRAKE"] == 1
 
     ret.brakePressed = cp.vl["BRAKE_MODULE"]["BRAKE_PRESSED"] != 0
-    ret.brakeHoldActive = cp.vl["ESP_CONTROL"]["BRAKE_HOLD_ACTIVE"] == 1
+    #ret.brakeHoldActive = cp.vl["ESP_CONTROL"]["BRAKE_HOLD_ACTIVE"] == 1
 
     if self.CP.flags & ToyotaFlags.SECOC.value:
       self.secoc_synchronization = copy.copy(cp.vl["SECOC_SYNCHRONIZATION"])
       ret.gasPressed = cp.vl["GAS_PEDAL"]["GAS_PEDAL_USER"] > 0
-      can_gear = int(cp.vl["GEAR_PACKET_HYBRID"]["GEAR"])
+      if self.CP.carFingerprint not in (CAR.LEXUS_ES_PATCHED,):
+        can_gear = int(cp.vl["GEAR_PACKET_HYBRID"]["GEAR"])
+      else:
+        can_gear = int(cp.vl["GEAR_PACKET"]["GEAR"])
     else:
-      ret.gasPressed = cp.vl["PCM_CRUISE"]["GAS_RELEASED"] == 0
+      ret.gasPressed = cp.vl["PCM_CRUISE"]["GAS_RELEASED"] == 0  # TODO: these also have GAS_PEDAL, come back and unify
       can_gear = int(cp.vl["GEAR_PACKET"]["GEAR"])
       if not self.CP.flags & ToyotaFlags.DISABLE_RADAR.value:
         ret.stockAeb = bool(cp_acc.vl["PRE_COLLISION"]["PRECOLLISION_ACTIVE"] and cp_acc.vl["PRE_COLLISION"]["FORCE"] < -1e-5)
+
+    if self.toyota_drive_mode: # and not self.CP.flags & ToyotaFlags.SECOC.value:
+      sport_signal = 'SPORT_ON_2' if self.CP.carFingerprint in (CAR.TOYOTA_RAV4_TSS2, CAR.LEXUS_ES_TSS2,
+                                                                CAR.TOYOTA_HIGHLANDER_TSS2) else 'SPORT_ON'
+
+      if not self._drive_mode_signals_checked:
+        self._drive_mode_signals_checked = True
+        try:
+          sport_mode = cp.vl["GEAR_PACKET"][sport_signal]
+          self._sport_signal_available = True
+        except KeyError:
+          sport_mode = 0
+          self._sport_signal_available = False
+        try:
+          eco_mode = cp.vl["GEAR_PACKET"]['ECON_ON']
+          self._eco_signal_available = True
+        except KeyError:
+          eco_mode = 0
+          self._eco_signal_available = False
+      else:
+        sport_mode = cp.vl["GEAR_PACKET"][sport_signal] if self._sport_signal_available else 0
+        eco_mode = cp.vl["GEAR_PACKET"]['ECON_ON'] if self._eco_signal_available else 0
+
+      accel_profile = get_accel_personality(sport_mode, eco_mode)
+
+      if not self._accel_profile_init or accel_profile != self._prev_accel_profile:
+        self._host_params.put('AccelPersonality', int(accel_profile))
+        self._accel_profile_init = True
+        self._prev_accel_profile = accel_profile
 
     self.parse_wheel_speeds(ret,
       cp.vl["WHEEL_SPEEDS"]["WHEEL_SPEED_FL"],
@@ -200,7 +273,7 @@ class CarState(CarStateBase, CarStateExt):
         buttonEvents.extend(create_button_events(1, 0, {1: ButtonType.lkas}) +
                             create_button_events(0, 1, {1: ButtonType.lkas}))
 
-      if not (self.CP.flags & (ToyotaFlags.RADAR_ACC | ToyotaFlags.SECOC)):
+      if not (self.CP.flags & (ToyotaFlags.RADAR_ACC)):
         # distance button is wired to the ACC module (camera or radar)
         self.distance_button = cp_acc.vl["ACC_CONTROL"]["DISTANCE"]
 
@@ -212,6 +285,16 @@ class CarState(CarStateBase, CarStateExt):
 
     ret.buttonEvents = buttonEvents
 
+    if self.enhanced_bsm.enabled and self.frame > 199:
+      ret.leftBlindspot, ret.rightBlindspot = self.enhanced_bsm.update(cp, self.frame)
+
+    if self.CP_SP.flags & ToyotaFlagsSP.SP_AUTO_BRAKE_HOLD:
+      self.pre_collision_2 = copy.copy(cp_cam.vl["PRE_COLLISION_2"])
+      if "BRAKE" in cp.vl:
+        self.brake_force = float(cp.vl["BRAKE"]["BRAKE_FORCE"])
+
+    self.frame += 1
+
     CarStateExt.update(self, ret, ret_sp, can_parsers)
 
     return ret, ret_sp
@@ -220,7 +303,22 @@ class CarState(CarStateBase, CarStateExt):
   def get_can_parsers(CP, CP_SP):
     pt_messages = [
       ("BLINKERS_STATE", float('nan')),
+      # This car does not broadcast these messages. Registering them with a NaN
+      # rate marks them alive-ignored, so their absence no longer forces
+      # can_valid=False (which made controlsd set carControl invalid and
+      # blocked ACC). Merely reading cp.vl[...] would auto-register them as
+      # alive-required instead.
+      ("DSU_CRUISE", float('nan')),
+      ("GEAR_PACKET", float('nan')),
+      ("GEAR_PACKET_HYBRID", float('nan')),
+      ("PCM_CRUISE_ALT", float('nan')),
+      ("VSC1S07", float('nan')),
     ]
+    if CP.flags & ToyotaFlags.HYBRID:
+      pt_messages.append(("ENGINE_RPM", float('nan')))
+
+    if CP_SP.flags & ToyotaFlagsSP.SP_AUTO_BRAKE_HOLD and "BRAKE" in DBCParser(DBC[CP.carFingerprint][Bus.pt]).name_to_msg:
+      pt_messages.append(("BRAKE", float('nan')))
 
     cam_messages = [
       ("RSA1", 0),
@@ -228,6 +326,6 @@ class CarState(CarStateBase, CarStateExt):
     ]
 
     return {
-      Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], pt_messages, 0),
-      Bus.cam: CANParser(DBC[CP.carFingerprint][Bus.pt], [] + cam_messages, 2),
+      Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], pt_messages, CanBus(CP).pt),
+      Bus.cam: CANParser(DBC[CP.carFingerprint][Bus.pt], [] + cam_messages, CanBus(CP).cam),
     }
