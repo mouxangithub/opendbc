@@ -965,6 +965,8 @@ class TestOceaniaCluster:
       CP.carVin = wmi + "TCBDY5M0123456"[:14]
       CP_SP = car_params_sp(CP, CAR.MAZDA_CX9_2021)
       assert bool(CP_SP.flags & MazdaFlagsSP.OCEANIA_CLUSTER) == expect, wmi
+      # capnp rejects an IntFlag, so card would crash serializing CarParamsSP
+      assert type(CP_SP.flags) is int, wmi
 
 
 class TestDistanceButtons:
