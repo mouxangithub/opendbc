@@ -345,6 +345,8 @@ struct RadarData @0x888ad6581cf0aacb {
   errors @3 :Error;
   points @1 :List(RadarPoint);
   radarTrackFlipped @4 :Bool;  # frontRadar yRel/yvRel already inverted by RadarTrackFlip
+  displayPoints @5 :List(RadarPoint); # full-track objects kept separate from the control points
+  hasDisplayData @6 :Bool;     # marks a display stream as supported; kept set even when empty/starting/faulted
 
   struct Error {
     canError @0 :Bool;
@@ -367,6 +369,7 @@ struct RadarData @0x888ad6581cf0aacb {
     radarSource @8 :Text; # "scc", "radar", etc.
     aLead @9 :Float32;   # filtered lead accel (m/s^2), written by radar_tracks
     jLead @10 :Float32;  # filtered lead jerk (m/s^3), written by radar_tracks
+    trackState @11 :UInt8; # radar-native object state; 0 when unavailable
   }
 
   enum ErrorDEPRECATED {

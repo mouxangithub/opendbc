@@ -2,6 +2,7 @@ from opendbc.car import Bus, structs, get_safety_config, uds
 from opendbc.car.toyota.carstate import CarState
 from opendbc.car.toyota.carcontroller import CarController
 from opendbc.car.toyota.radar_interface import RadarInterface
+from opendbc.car.toyota.ars510_carrot import use_ars510
 from opendbc.car.toyota.values import Ecu, CAR, DBC, ToyotaFlags, CarControllerParams, TSS2_CAR, RADAR_ACC_CAR, NO_DSU_CAR, \
                                                   MIN_ACC_SPEED, EPS_SCALE, NO_STOP_TIMER_CAR, ToyotaSafetyFlags, UNSUPPORTED_DSU_CAR, CanBus
 from opendbc.car.disable_ecu import disable_ecu
@@ -145,6 +146,13 @@ class CarInterface(CarInterfaceBase):
       # Hybrids have much quicker longitudinal actuator response
       if ret.flags & ToyotaFlags.HYBRID.value:
         ret.longitudinalActuatorDelay = 0.05
+
+    if use_ars510(ret):
+      # Opt-in ARS510 receive path. Declares only what the verified receive
+      # protocol supports; longitudinal enable/ECU disable/safety stay as decided.
+      ret.radarUnavailable = False
+      ret.radarTimeStep = 0.06
+      ret.radarDelay = 0.0
 
     CAN = CanBus(None, fingerprint)
     if CAN.pt >= 4:
