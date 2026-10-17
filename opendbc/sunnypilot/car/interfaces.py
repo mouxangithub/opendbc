@@ -189,7 +189,14 @@ def _initialize_toyota(CP: structs.CarParams, CP_SP: structs.CarParamsSP, params
     if toyota_tss2_long_tuning:
       CP_SP.flags |= ToyotaFlagsSP.TSS2_LONG_TUNING.value
 
-    if toyota_enhanced_bsm and CP.carFingerprint in (TSS2_CAR - SECOC_CAR):
+    # SecOC cars used to be excluded from the enhanced BSM path. That exclusion is not needed:
+    # toyota_tx_hook already whitelists these UDS frames for secoc cars (sp_valid_uds_msgs), and
+    # toyota_secoc_pt.dbc now carries the DEBUG (0x758) message so carstate can decode the reply.
+    # Motivation: on the SecOC platforms the stock 0x3F6 BSM frame behaves as a static switch-state
+    # broadcast (ADJACENT_ENABLED/APPROACHING_ENABLED set, all four detection bits low across ~6 h
+    # of logged driving), so the diagnostic channel is the only known route to a real blind spot
+    # state there. Still opt-in through ToyotaEnhancedBsm.
+    if toyota_enhanced_bsm and CP.carFingerprint in TSS2_CAR:
       CP_SP.flags |= ToyotaFlagsSP.SP_ENHANCED_BSM.value
 
     if toyota_auto_brake_hold and CP.carFingerprint in (TSS2_CAR - RADAR_ACC_CAR - SECOC_CAR):

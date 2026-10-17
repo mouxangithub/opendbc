@@ -320,6 +320,12 @@ class CarState(CarStateBase, CarStateExt):
     if CP_SP.flags & ToyotaFlagsSP.SP_AUTO_BRAKE_HOLD and "BRAKE" in DBCParser(DBC[CP.carFingerprint][Bus.pt]).name_to_msg:
       pt_messages.append(("BRAKE", float('nan')))
 
+    if "DEBUG" in DBCParser(DBC[CP.carFingerprint][Bus.pt]).name_to_msg:
+      # 0x758 only answers once the tester starts polling it, and the ACC/BSM handshake traffic is
+      # sparse. Reading cp.vl["DEBUG"] would auto-register it as alive-required, so any quiet stretch
+      # on that address alone would drag can_valid down and block ACC.
+      pt_messages.append(("DEBUG", float('nan')))
+
     cam_messages = [
       ("RSA1", 0),
       ("RSA2", 0),
