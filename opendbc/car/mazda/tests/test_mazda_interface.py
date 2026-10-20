@@ -73,7 +73,7 @@ class TestMazdaEps:
     candidate, fw, steer_to_zero, alpha_offered = EPS_PROJECTIONS[name]
     CP = car_params(candidate, car_fw=eps_fw(fw) if fw else None, alpha_long=alpha_long)
     assert not CP.dashcamOnly
-    assert CP.steerActuatorDelay == pytest.approx(0.14, abs=5e-8)
+    assert CP.steerActuatorDelay == pytest.approx(0.05, abs=5e-8)
     assert CP.safetyConfigs[0].safetyParam & MazdaSafetyFlags.EPS_HW.value
     assert bool(CP.flags & MazdaFlags.STEER_TO_ZERO_EPS) == steer_to_zero
     assert bool(CP.flags & MazdaFlags.LEGACY_FW_EPS) == (not steer_to_zero)

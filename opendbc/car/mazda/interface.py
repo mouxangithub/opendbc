@@ -80,8 +80,8 @@ class CarInterface(CarInterfaceBase):
 
     ret.enableBsm = 0x477 in fingerprint[0]
 
-    # Command-to-torque lag measured on the EPS hardware; lagd learns the remaining delay.
-    ret.steerActuatorDelay = 0.14
+    # lagd starts from this plus 0.2 s; CX-5 drives learn 0.23-0.26 s request-to-yaw.
+    ret.steerActuatorDelay = 0.05
     ret.steerLimitTimer = 0.8
 
     CarInterface.configure_torque_tune(candidate, ret.lateralTuning)
