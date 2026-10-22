@@ -1,6 +1,6 @@
 from opendbc.car import Bus, get_safety_config, structs, uds
 from opendbc.car.hyundai.hyundaicanfd import CanBus
-from opendbc.car.hyundai.values import HyundaiFlags, CAR, DBC, HyundaiSafetyFlags
+from opendbc.car.hyundai.values import HyundaiFlags, HyundaiExtFlags, CAR, DBC, HyundaiSafetyFlags
 from opendbc.car.hyundai.radar_interface import RADAR_START_ADDR
 from opendbc.car.interfaces import CarInterfaceBase
 from opendbc.car.disable_ecu import disable_ecu
@@ -17,6 +17,13 @@ Ecu = structs.CarParams.Ecu
 
 # Cancel button can sometimes be ACC pause/resume button, main button can also enable on some cars
 ENABLE_BUTTONS = (ButtonType.accelCruise, ButtonType.decelCruise, ButtonType.cancel, ButtonType.mainCruise)
+
+# ECAN messages carrying the hybrid power-flow mode, used only to set
+# HyundaiExtFlags.EV_MODE_STATUS_230 (display-only). Ported from cp.
+CANFD_HYBRID_STATUS_ADDR = 0xFA
+CANFD_HYBRID_STATUS_DLC = 32
+EV_MODE_STATUS_ADDR = 0x230
+EV_MODE_STATUS_DLC = 32
 
 
 class CarInterface(CarInterfaceBase):
@@ -63,6 +70,32 @@ class CarInterface(CarInterfaceBase):
           ret.flags |= HyundaiFlags.CANFD_ALT_BUTTONS.value
         if not ret.flags & HyundaiFlags.CANFD_RADAR_SCC:
           ret.flags |= HyundaiFlags.CANFD_CAMERA_SCC.value
+
+      # Radar object group and corner-radar object detection.
+      #
+      # Which object messages a car broadcasts varies by platform and ECU part number, and
+      # the radar interface needs to know before it can decode anything. Detected from the
+      # fingerprint rather than the platform list so a car that differs from its nominal
+      # configuration is still handled. Ported from cp.
+      #
+      # These set extFlags, not flags: nothing here changes what panda will allow.
+      if 0x210 in fingerprint[CAN.ACAN]:
+        ret.extFlags |= HyundaiExtFlags.RADAR_GROUP1.value
+      elif 0x400 in fingerprint[CAN.ACAN] and 0x41D in fingerprint[CAN.ACAN]:
+        ret.extFlags |= HyundaiExtFlags.RADAR_GROUP3.value
+      if all(fingerprint[CAN.ACAN].get(addr) == 32 for addr in range(0x235, 0x249)):
+        ret.extFlags |= HyundaiExtFlags.CORNER_RADAR_OBJECTS_235.value
+      if all(fingerprint[CAN.ACAN].get(addr) == 32 for addr in range(0x180, 0x185)):
+        ret.extFlags |= HyundaiExtFlags.CORNER_RADAR_OBJECTS_180.value
+
+      # The 0x430/0x440 layout is not validated as object data. Leave the flag for
+      # offline analysis only - advertising it would make the radar interface emit
+      # tracks it cannot justify.
+
+      # ECAN 0x230/DLC32 carries the hybrid power-flow mode. Display-only.
+      if (fingerprint[CAN.ECAN].get(EV_MODE_STATUS_ADDR) == EV_MODE_STATUS_DLC
+          and fingerprint[CAN.ECAN].get(CANFD_HYBRID_STATUS_ADDR) == CANFD_HYBRID_STATUS_DLC):
+        ret.extFlags |= HyundaiExtFlags.EV_MODE_STATUS_230.value
 
       # Some LKA steering cars have alternative messages for gear checks
       # ICE cars do not have 0x130; GEARS message on 0x40 or 0x70 instead
@@ -131,6 +164,11 @@ class CarInterface(CarInterfaceBase):
     # Common longitudinal control setup
 
     ret.radarUnavailable = RADAR_START_ADDR not in fingerprint[1] or Bus.radar not in DBC[ret.carFingerprint]
+
+    # Track filters need the documented radar period; the estimate path is the fallback.
+
+    ret.radarTimeStep = 0.05
+
     ret.openpilotLongitudinalControl = alpha_long and ret.alphaLongitudinalAvailable
     ret.pcmCruise = not ret.openpilotLongitudinalControl
     ret.longitudinalActuatorDelay = 0.5
