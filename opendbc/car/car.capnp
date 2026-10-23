@@ -234,6 +234,21 @@ struct CarState {
   # is monotonic and must not be replaced by the later publication timestamp.
   radarInput @71 :RadarInput;
 
+  # Cluster-to-body speed ratio, so a consumer can scale a speed target the way
+  # the dashboard would show it. 0 means "not measured" and must be treated as
+  # 1.0 by the reader: the cluster can legitimately read 0 at standstill, and a
+  # ratio of 0 would otherwise erase the target. carrotpilot carries the same
+  # value at a different ordinal; this is an append, not a copy.
+  vCluRatio @72 :Float32;
+
+  # Distance to the camera-read speed-limit sign, when the platform provides it.
+  # The unit is metres and a non-positive value means "unknown".
+  speedLimitDistance @73 :Float32;
+
+  # Free-form per-frame carrot debug string. Empty unless a carrot diagnostic
+  # path fills it; kept short so a log segment stays bounded.
+  logCarrot @74 :Text;
+
   # cruise state
   cruiseState @10 :CruiseState;
 

@@ -352,6 +352,15 @@ class CarInterfaceBase(ABC, CarInterfaceBaseSP):
     if abs(ret.vEgo) < self.CS.cluster_min_speed:
       ret.vEgoCluster = 0.0
 
+    # Cluster-to-body speed ratio, derived here rather than per brand so the
+    # brands that already publish vEgoCluster (hyundai, honda, rivian,
+    # volkswagen) all get it for free and the ones that fill it with a constant
+    # (toyota, byd) do not each need their own copy. The guard matters: the
+    # block above zeroes vEgoCluster near standstill, so a naive division would
+    # publish 0 and erase any target the reader scales by it. 0 is the "not
+    # measured" sentinel and every reader must treat it as 1.0.
+    ret.vCluRatio = ret.vEgoCluster / ret.vEgo if ret.vEgoCluster > 0.0 and ret.vEgo > 0.5 else 0.0
+
     if ret.cruiseState.speedCluster == 0:
       ret.cruiseState.speedCluster = ret.cruiseState.speed
 
