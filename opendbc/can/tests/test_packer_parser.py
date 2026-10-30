@@ -366,3 +366,35 @@ class TestCanParserPacker(unittest.TestCase):
     assert packer.make_can_msg("ACC_CONTROL", 0, {"UNKNOWN_SIGNAL": 0}) == (835, b'\x00\x00\x00\x00\x00\x00\x00N', 0)
     assert packer.make_can_msg("UNKNOWN_MESSAGE", 0, {"UNKNOWN_SIGNAL": 0}) == (0, b'', 0)
     assert packer.make_can_msg(0, 0, {"UNKNOWN_SIGNAL": 0}) == (0, b'', 0)
+
+
+class TestOnlyPopulatedListsClear(unittest.TestCase):
+  """Ported from cp 021594e9: clearing must cost O(updated), keep identities."""
+
+  def test_only_populated_lists_clear_without_losing_aliases_or_batch_samples(self):
+    packer = CANPacker(TEST_DBC)
+    parser = CANParser(TEST_DBC, [('CAN_FD_MESSAGE', 0)], 0)
+
+    def msg():
+      return packer.make_can_msg('CAN_FD_MESSAGE', 0, {})
+
+    updated = parser.update([1, [msg(), msg()]])
+    values = parser.vl_all['CAN_FD_MESSAGE']['COUNTER']
+    self.assertEqual(values, [0., 1.])
+    self.assertIs(values, parser.vl_all[245]['COUNTER'])
+    updated.clear()  # Returned caller-owned set must not control the next clear.
+    parser.update([])
+    self.assertEqual(values, [])
+    self.assertIs(parser.vl_all[245]['COUNTER'], values)
+    parser.update([2, [msg()]])
+    self.assertEqual(values, [2.])
+    parser.update([3, [(245, bytes(65), 0)]])
+    self.assertEqual(values, [])
+    # Dynamic subscription still starts empty and participates in later clears.
+    parser2 = CANParser(TEST_DBC, [], 0)
+    parser2.vl['CAN_FD_MESSAGE']
+    parser2.update([4, [msg()]])
+    ref = parser2.vl_all[245]['COUNTER']
+    self.assertEqual(len(ref), 1)
+    parser2.update([5, []])
+    self.assertEqual(ref, [])

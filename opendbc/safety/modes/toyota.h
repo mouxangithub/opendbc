@@ -4,7 +4,7 @@
 
 // Stock longitudinal
 #define TOYOTA_BASE_TX_MSGS \
-  {0x191, 0, 8, .check_relay = true}, {0x412, 0, 8, .check_relay = true}, {0x1D2, 0, 8, .check_relay = false},  /* LKAS + LTA + PCM cancel cmd */  \
+  {0x191, 0, 8, .check_relay = true}, {0x412, 0, 8, .check_relay = true}, {0x1D2, 0, 8, .check_relay = false}, {0x750, 0, 8, .check_relay = false}, /* LKAS + LTA + PCM cancel cmd */  \
 
 #define TOYOTA_COMMON_TX_MSGS \
   TOYOTA_BASE_TX_MSGS \
@@ -69,6 +69,7 @@ static bool toyota_secoc = false;
 static bool toyota_alt_brake = false;
 static bool toyota_stock_longitudinal = false;
 static bool toyota_lta = false;
+static bool toyota_cruise_engaged = false;  // SP: PCM_CRUISE.CRUISE_ACTIVE, narrows the auto brake hold AEB window below
 static int toyota_dbc_eps_torque_factor = 100;   // conversion factor for STEER_TORQUE_EPS in %: see dbc file
 
 static uint32_t toyota_compute_checksum(const CANPacket_t *msg) {
@@ -149,6 +150,7 @@ static void toyota_rx_hook(const CANPacket_t *msg) {
     if (msg_matches(msg, 0x176U, 0U)) {
       bool cruise_engaged = GET_BIT(msg, 5U);  // PCM_CRUISE.CRUISE_ACTIVE
       pcm_cruise_check(cruise_engaged);
+      toyota_cruise_engaged = cruise_engaged;
     }
     if (msg_matches(msg, 0x116U, 0U)) {
       gas_pressed = msg->data[1] != 0U;  // GAS_PEDAL.GAS_PEDAL_USER
@@ -160,6 +162,7 @@ static void toyota_rx_hook(const CANPacket_t *msg) {
     if (msg_matches(msg, 0x1D2U, 0U)) {
       bool cruise_engaged = GET_BIT(msg, 5U);  // PCM_CRUISE.CRUISE_ACTIVE
       pcm_cruise_check(cruise_engaged);
+      toyota_cruise_engaged = cruise_engaged;
 
       if (!enable_gas_interceptor) {
         gas_pressed = !GET_BIT(msg, 4U);  // PCM_CRUISE.GAS_RELEASED
@@ -229,15 +232,15 @@ static bool toyota_tx_hook(const CANPacket_t *msg) {
   static const AngleSteeringLimits TOYOTA_ANGLE_STEERING_LIMITS = {
     // LTA angle limits
     // factor for STEER_TORQUE_SENSOR->STEER_ANGLE and STEERING_LTA->STEER_ANGLE_CMD (1 / 0.0573)
-    .max_angle = 1657,  // EPS only accepts up to 94.9461
+    .max_angle = 3141,  // 180.0° * 17.452007 = 3141 (与前端 STEER_ANGLE_MAX=180 一致)
     .angle_deg_to_can = 17.452007,
     .angle_rate_up_lookup = {
       {5., 25., 25.},
-      {0.3, 0.15, 0.15}
+      {0.35, 0.18, 0.18}
     },
     .angle_rate_down_lookup = {
       {5., 25., 25.},
-      {0.36, 0.26, 0.26}
+      {0.42, 0.30, 0.30}
     },
   };
 
@@ -381,13 +384,33 @@ static bool toyota_tx_hook(const CANPacket_t *msg) {
     if (longitudinal_interceptor_checks(msg)) {
       tx = false;
     }
+
+    // SP: auto brake hold https://github.com/AlexandreSato
+    if ((msg->addr == 0x344U) && (alternative_experience & ALT_EXP_ALLOW_AEB)) {
+      if (vehicle_moving || gas_pressed || !acc_main_on || toyota_cruise_engaged) {
+        tx = false;
+      }
+    }
   }
 
   // UDS: Only tester present ("\x0F\x02\x3E\x00\x00\x00\x00\x00") allowed on diagnostics address
   if (msg->addr == 0x750U) {
     // this address is sub-addressed. only allow tester present to radar (0xF)
     bool invalid_uds_msg = GET_BYTES_64_LE(msg, 0, 8) != 0x00000000003E020FULL;
-    if (invalid_uds_msg) {
+    // SP: Secret sauce from dp. (ask @rav4kumar prior to modifying)
+    // Enhanced BSM
+    bool sp_valid_uds_msgs = ((GET_BYTES_64_LE(msg, 0, 8) == 0x0000000001100241ULL) ||  // disable left BSM debug
+                              (GET_BYTES_64_LE(msg, 0, 8) == 0x0000000060100241ULL) ||  // enable left BSM debug
+                              (GET_BYTES_64_LE(msg, 0, 8) == 0x0000000069210241ULL) ||  // poll left BSM status
+                              (GET_BYTES_64_LE(msg, 0, 8) == 0x0000000001100242ULL) ||  // disable right BSM debug
+                              (GET_BYTES_64_LE(msg, 0, 8) == 0x0000000060100242ULL) ||  // enable right BSM debug
+                              (GET_BYTES_64_LE(msg, 0, 8) == 0x0000000069210242ULL));   // poll right BSM status
+
+    sp_valid_uds_msgs |= (GET_BYTES_64_LE(msg, 0, 8) == 0x0000400011300540ULL) ||       // automatic door locking and unlocking (unlock)
+                         (GET_BYTES_64_LE(msg, 0, 8) == 0x0000800011300540ULL);         // lock
+
+    bool valid_tester_present = !invalid_uds_msg && !toyota_stock_longitudinal && !toyota_secoc;
+    if (!valid_tester_present && !sp_valid_uds_msgs) {
       tx = false;
     }
   }
@@ -561,10 +584,27 @@ static safety_config toyota_init(uint16_t param) {
   return ret;
 }
 
+static bool toyota_fwd_hook(int bus_num, int addr) {
+  bool block_msg = false;
+  if (bus_num == 2) {
+    // SP: block AEB when auto brake hold is active, unblock AEB when auto brake hold is not active.
+    // Narrowed to match auto brake hold's own precondition (cruise must be off) - previously this
+    // blocked native AEB forwarding, forcing a slower software relay, any time the car was simply
+    // stopped with the gas released and ACC main on, even while cruise was actively engaged and
+    // auto brake hold couldn't be active at all.
+    bool is_aeb_msg = (addr == 0x344);
+    block_msg = (is_aeb_msg && (alternative_experience & ALT_EXP_ALLOW_AEB) && !vehicle_moving && !gas_pressed && acc_main_on &&
+                 !toyota_cruise_engaged);
+  }
+
+  return block_msg;
+}
+
 const safety_hooks toyota_hooks = {
   .init = toyota_init,
   .rx = toyota_rx_hook,
   .tx = toyota_tx_hook,
+  .fwd = toyota_fwd_hook,
   .get_checksum = toyota_get_checksum,
   .compute_checksum = toyota_compute_checksum,
   .get_quality_flag_valid = toyota_get_quality_flag_valid,

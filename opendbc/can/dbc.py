@@ -16,7 +16,7 @@ from opendbc.car.volkswagen.mlbcan import volkswagen_mlb_checksum
 from opendbc.car.volkswagen.mqbcan import volkswagen_meb_alt_crc_checksum, volkswagen_mqb_meb_checksum, xor_checksum
 from opendbc.car.tesla.teslacan import tesla_checksum
 from opendbc.car.body.bodycan import body_checksum
-from opendbc.car.byd.bydcan import byd_checksum
+from opendbc.car.byd.bydcan import byd_packer_checksum
 from opendbc.car.psa.psacan import psa_checksum
 from opendbc.car.rivian.riviancan import rivian_checksum
 from opendbc.car.ford.fordcan import FORD_CHECKSUM_FIELDS, ford_checksum
@@ -244,7 +244,7 @@ def get_checksum_state(dbc_name: str) -> ChecksumState | None:
   elif dbc_name.startswith("psa_"):
     return ChecksumState(SignalType.PSA_CHECKSUM, psa_checksum)
   elif dbc_name.startswith("byd_"):
-    return ChecksumState(SignalType.BYD_CHECKSUM, byd_checksum)
+    return ChecksumState(SignalType.BYD_CHECKSUM, byd_packer_checksum)
   elif dbc_name == "ford_lincoln_base_pt":
     # Other _Cs fields are optional or use model-specific checksum algorithms.
     return ChecksumState(SignalType.FORD_CHECKSUM, ford_checksum, ford_setup_signal, checksum_pattern=r"_Cs$",

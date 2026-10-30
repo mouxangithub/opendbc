@@ -1,212 +1,299 @@
 #!/usr/bin/env python3
-import itertools
 import unittest
-import numpy as np
 
-from opendbc.car.byd.carcontroller import get_safety_CP
-from opendbc.car.byd.values import CarControllerParams
-from opendbc.car.lateral import get_max_angle_delta_vm, get_max_angle_vm
 from opendbc.car.structs import CarParams
-from opendbc.car.vehicle_model import VehicleModel
+from opendbc.safety.tests.libsafety import libsafety_py
 import opendbc.safety.tests.common as common
-from opendbc.safety.tests.common import away_round
+from opendbc.safety.tests.common import CANPackerSafety
 
-STEERING_MODULE_ADAS = 0x1E2
-LKAS_HUD_ADAS = 0x316
-PCM_BUTTONS = 0x3B0
-def safety_max_can(max_angle_float, can_offset=0):
-  # Matches C: max_angle_can = (int)(max_angle * 10 + 1.) which is floor(max_angle * 10) + 1
-  return int(max_angle_float * 10 + 1.) + can_offset
-class TestBydSafety(common.CarSafetyTest, common.AngleSteeringSafetyTest):
-  DBC = "byd_atto3"
-  SAFETY_MODEL = CarParams.SafetyModel.byd
+BYD_CANBUS_ESC = 0
+BYD_CANBUS_MPC = 2
 
-  RELAY_MALFUNCTION_ADDRS = {0: (STEERING_MODULE_ADAS, LKAS_HUD_ADAS)}
-  FWD_BLACKLISTED_ADDRS = {2: [STEERING_MODULE_ADAS, LKAS_HUD_ADAS]}
-  TX_MSGS = [[STEERING_MODULE_ADAS, 0], [LKAS_HUD_ADAS, 0], [PCM_BUTTONS, 0]]
+BYD_FLAG_HAN_TANG_DMEV = 0x1
+BYD_FLAG_TANG_DMI = 0x2
+BYD_FLAG_SONG_PLUS_DMI = 0x4
+BYD_FLAG_QIN_PLUS_DMI = 0x8
+BYD_FLAG_YUAN_PLUS_DMI_ATTO3 = 0x10
+BYD_FLAG_ATTO3_GENERAL = 0x20
 
-  MAIN_BUS = 0
-  CAM_BUS = 2
+BYD_COMMON_TX_MSGS = [
+  [0x32E, BYD_CANBUS_ESC],  # ACC_CMD
+  [0x316, BYD_CANBUS_ESC],  # ACC_MPC_STATE
+  [0x318, BYD_CANBUS_MPC],  # ACC_EPS_STATE
+]
 
-  STEER_ANGLE_MAX = 390  # deg, EPS fault limit
-  DEG_TO_CAN = 10
+BYD_RELAY_MALFUNCTION_ADDRS = {BYD_CANBUS_ESC: (0x316,)}
+BYD_FWD_BLACKLISTED_ADDRS = {
+  BYD_CANBUS_ESC: [0x318],
+  BYD_CANBUS_MPC: [0x316, 0x32E],
+}
 
-  # BYD uses get_max_angle_delta_vm and get_max_angle_vm for lateral accel and jerk limits
-  ANGLE_RATE_BP = None
-  ANGLE_RATE_UP = None
-  ANGLE_RATE_DOWN = None
+BYD_ATTO3_GENERAL_TX_MSGS = [
+  [0x1E2, BYD_CANBUS_ESC],  # STEERING_MODULE_ADAS
+  [0x316, BYD_CANBUS_ESC],  # LKAS_HUD_ADAS
+]
 
-  # Real time limits
-  LATERAL_FREQUENCY = 50  # Hz
+BYD_ANGLE_GENERIC_TX_MSGS = [
+  [0x1E2, BYD_CANBUS_ESC],  # CID_TCDUBH angle command
+  [0x32D, BYD_CANBUS_ESC],  # CID_XQYNBW ACC HUD
+  [0x32E, BYD_CANBUS_ESC],  # CID_RJDCMR ACC CMD
+  [0x3B0, BYD_CANBUS_ESC],  # CID_YHMGPU PCM buttons
+]
 
-  def _get_steer_cmd_angle_max(self, speed):
-    return get_max_angle_vm(max(speed, 1), self.VM, CarControllerParams)
+BYD_ATTO3_RELAY_MALFUNCTION_ADDRS = {BYD_CANBUS_ESC: (0x1E2,)}
+BYD_ATTO3_FWD_BLACKLISTED_ADDRS = {
+  BYD_CANBUS_MPC: [0x1E2, 0x316],
+}
+BYD_ATTO3_FWD_BUS_LOOKUP = {BYD_CANBUS_ESC: BYD_CANBUS_MPC, BYD_CANBUS_MPC: BYD_CANBUS_ESC}
+
+BYD_ANGLE_GENERIC_RELAY_MALFUNCTION_ADDRS = {BYD_CANBUS_ESC: (0x1E2,)}
+BYD_ANGLE_GENERIC_FWD_BLACKLISTED_ADDRS = {
+  BYD_CANBUS_MPC: [0x1E2],
+}
+BYD_ANGLE_GENERIC_FWD_BUS_LOOKUP = {BYD_CANBUS_ESC: BYD_CANBUS_MPC, BYD_CANBUS_MPC: BYD_CANBUS_ESC}
+
+BYD_FLAG_ANGLE_MODE = 0x100
+
+
+class BydSafetyBase(common.CarSafetyTest, common.MotorTorqueSteeringSafetyTest):
+  TX_MSGS = BYD_COMMON_TX_MSGS
+  RELAY_MALFUNCTION_ADDRS = BYD_RELAY_MALFUNCTION_ADDRS
+  FWD_BLACKLISTED_ADDRS = BYD_FWD_BLACKLISTED_ADDRS
+
+  MAX_RATE_UP = 17
+  MAX_RATE_DOWN = 17
+  MAX_TORQUE_LOOKUP = [0], [300]
+  MAX_RT_DELTA = 243
+  MAX_TORQUE_ERROR = 80
+  TORQUE_MEAS_TOLERANCE = 0
+
+  FLAGS = 0
 
   def setUp(self):
+    # common.SafetyTestBase.setUp re-applies the hooks from these; set them to
+    # match what this Base configures so the super() call is a no-op repeat.
+    # super().setUp() re-initializes the safety state, so the CruiseActivated
+    # precondition has to be fed after it, not before.
+    self.SAFETY_MODEL = CarParams.SafetyModel.byd
+    self.SAFETY_PARAM = self.FLAGS
+    self.packer = CANPackerSafety("byd_han_dmev_2020")
+    self.safety = libsafety_py.libsafety
+    self.safety.set_safety_hooks(CarParams.SafetyModel.byd, self.FLAGS)
+    self.safety.init_tests()
     super().setUp()
-    self.VM = VehicleModel(get_safety_CP())
+    # BYD requires CruiseActivated from ACC_EPS_STATE before LKAS_Active counts as a steer request
+    self._rx(self._acc_eps_state_msg(cruise_activated=True))
+
+  def _acc_eps_state_msg(self, cruise_activated=False, torque=0):
+    values = {"CruiseActivated": int(cruise_activated), "MainTorque": torque}
+    return self.packer.make_can_msg_safety("ACC_EPS_STATE", BYD_CANBUS_ESC, values)
+
+  def _torque_cmd_msg(self, torque, steer_req=1):
+    values = {"LKAS_Output": torque, "LKAS_Active": steer_req}
+    return self.packer.make_can_msg_safety("ACC_MPC_STATE", BYD_CANBUS_ESC, values)
+
+  def _torque_meas_msg(self, torque):
+    return self._acc_eps_state_msg(torque=torque)
+
+  def _speed_msg(self, speed):
+    values = {"CarDisplaySpeed": speed}
+    return self.packer.make_can_msg_safety("CARSPEED", BYD_CANBUS_ESC, values)
+
+  def _speed_msg_2(self, speed: float):
+    return None
+
+  def _user_brake_msg(self, brake):
+    values = {"BrakePedal": int(brake)}
+    return self.packer.make_can_msg_safety("PEDAL", BYD_CANBUS_ESC, values)
+
+  def _user_gas_msg(self, gas):
+    values = {"AcceleratorPedal": int(gas)}
+    return self.packer.make_can_msg_safety("PEDAL", BYD_CANBUS_ESC, values)
+
+  def _pcm_status_msg(self, enable):
+    values = {"AccState": 3 if enable else 0}
+    return self.packer.make_can_msg_safety("ACC_HUD_ADAS", BYD_CANBUS_MPC, values)
+
+  # MADS button / ACC main are not wired up for BYD; leave abstract to skip those tests
+  def _lkas_button_msg(self, enabled):
+    raise NotImplementedError
+
+  def _acc_state_msg(self, enabled):
+    # AccState=2 is ACC_ON (main switch on, not yet active), which sets acc_main_on without engaging cruise
+    values = {"AccState": 2 if enabled else 0}
+    return self.packer.make_can_msg_safety("ACC_HUD_ADAS", BYD_CANBUS_MPC, values)
+
+
+class TestBydSafety(BydSafetyBase):
+  FLAGS = BYD_FLAG_HAN_TANG_DMEV
+
+  def _switch_platform(self, flags):
+    self.safety.set_safety_hooks(CarParams.SafetyModel.byd, flags)
+    self.safety.init_tests()
+    self._rx(self._acc_eps_state_msg(cruise_activated=True))
+
+  def test_steer_req_requires_cruise_activated(self):
+    self.safety.set_controls_allowed(True)
+    self._set_prev_torque(self.MAX_TORQUE)
+
+    # Without CruiseActivated the steer request bit is ignored -> blocked
+    self.safety.init_tests()
+    self._rx(self._acc_eps_state_msg(cruise_activated=False))
+    self.assertFalse(self._tx(self._torque_cmd_msg(self.MAX_TORQUE, steer_req=1)))
+
+    # With CruiseActivated, torque is allowed
+    self._rx(self._acc_eps_state_msg(cruise_activated=True))
+    self.assertTrue(self._tx(self._torque_cmd_msg(self.MAX_TORQUE, steer_req=1)))
+
+  def _assert_platform_torque_allowed(self, flags):
+    self._switch_platform(flags)
+    self.safety.set_controls_allowed(True)
+    self._set_prev_torque(self.MAX_TORQUE)
+    self.assertTrue(self._tx(self._torque_cmd_msg(self.MAX_TORQUE)))
+
+  def test_tang_dmi_safety_config(self):
+    self._assert_platform_torque_allowed(BYD_FLAG_TANG_DMI)
+
+  def test_song_plus_dmi_safety_config(self):
+    self._assert_platform_torque_allowed(BYD_FLAG_SONG_PLUS_DMI)
+
+  def test_qin_plus_dmi_safety_config(self):
+    self._assert_platform_torque_allowed(BYD_FLAG_QIN_PLUS_DMI)
+
+  def test_default_safety_config(self):
+    # param = 0 falls back to the HAN/Tang DM-i config
+    self._switch_platform(0)
+    self.safety.set_controls_allowed(True)
+    self._set_prev_torque(self.MAX_TORQUE)
+    self.assertTrue(self._tx(self._torque_cmd_msg(self.MAX_TORQUE)))
+
+
+class BydAtto3GeneralSafetyBase(common.CarSafetyTest, common.AngleSteeringSafetyTest):
+  TX_MSGS = BYD_ATTO3_GENERAL_TX_MSGS
+  RELAY_MALFUNCTION_ADDRS = BYD_ATTO3_RELAY_MALFUNCTION_ADDRS
+  FWD_BLACKLISTED_ADDRS = BYD_ATTO3_FWD_BLACKLISTED_ADDRS
+  FWD_BUS_LOOKUP = BYD_ATTO3_FWD_BUS_LOOKUP
+
+  # Angle control limits (mirror CarControllerParams.ANGLE_LIMITS)
+  STEER_ANGLE_MAX = 90
+  DEG_TO_CAN = 10
+
+  ANGLE_RATE_BP = [0., 5., 25.]
+  ANGLE_RATE_UP = [2.5, 1.5, 0.4]   # windup limit per message (50 Hz)
+  ANGLE_RATE_DOWN = [2.5, 1.5, 0.6]  # unwind limit per message (50 Hz)
+
+  LATERAL_FREQUENCY = 50
+
+  FLAGS = BYD_FLAG_ATTO3_GENERAL
+
+  def setUp(self):
+    # common.SafetyTestBase.setUp re-applies the hooks from these; set them to
+    # match what this Base configures so the super() call is a no-op repeat.
+    self.SAFETY_MODEL = CarParams.SafetyModel.byd
+    self.SAFETY_PARAM = self.FLAGS
+    self.packer = CANPackerSafety("byd_general")
+    self.safety = libsafety_py.libsafety
+    self.safety.set_safety_hooks(CarParams.SafetyModel.byd, self.FLAGS)
+    self.safety.init_tests()
+    super().setUp()
 
   def _angle_cmd_msg(self, angle: float, enabled: bool, increment_timer: bool = True):
-    values = {"STEER_ANGLE": angle, "STEER_REQ": 1 if enabled else 0, "STEER_REQ_ACTIVE_LOW": 0 if enabled else 1}
-    if increment_timer:
-      self.safety.set_timer(self.__class__.cnt_angle_cmd * int(1e6 / self.LATERAL_FREQUENCY))
-      self.__class__.cnt_angle_cmd += 1
-    return self.packer.make_can_msg_safety("STEERING_MODULE_ADAS", self.MAIN_BUS, values)
-
-  cnt_angle_cmd = 0
+    values = {"STEER_ANGLE": angle, "STEER_REQ": 1 if enabled else 0}
+    return self.packer.make_can_msg_safety("STEERING_MODULE_ADAS", BYD_CANBUS_ESC, values)
 
   def _angle_meas_msg(self, angle: float):
     values = {"STEER_ANGLE_2": angle}
-    return self.packer.make_can_msg_safety("STEER_MODULE_2", self.MAIN_BUS, values)
-
-  def _pcm_status_msg(self, enable):
-    # ACC_STATE: 0=OFF, 3=ACC_ACTIVE
-    values = {"ACC_STATE": 3 if enable else 0}
-    return self.packer.make_can_msg_safety("ACC_HUD_ADAS", self.CAM_BUS, values)
+    return self.packer.make_can_msg_safety("STEER_MODULE_2", BYD_CANBUS_ESC, values)
 
   def _speed_msg(self, speed):
-    values = {"WHEELSPEED_CLEAN": speed * 3.6}
-    return self.packer.make_can_msg_safety("WHEELSPEED_CLEAN", self.MAIN_BUS, values)
+    values = {"WHEELSPEED_%s" % s: float(speed * 3.6 * 10) for s in ["FL", "FR", "BL", "BR"]}
+    return self.packer.make_can_msg_safety("WHEEL_SPEED", BYD_CANBUS_ESC, values)
+
+  def _speed_msg_2(self, speed: float):
+    return None
 
   def _user_brake_msg(self, brake):
-    values = {"BRAKE_PRESSED": 1 if brake else 0}
-    return self.packer.make_can_msg_safety("DRIVE_STATE", self.MAIN_BUS, values)
+    values = {"BRAKE_PEDAL": int(brake)}
+    return self.packer.make_can_msg_safety("PEDAL", BYD_CANBUS_ESC, values)
 
   def _user_gas_msg(self, gas):
-    values = {"RAW_THROTTLE": int(gas * 100)}
-    return self.packer.make_can_msg_safety("DRIVE_STATE", self.MAIN_BUS, values)
+    values = {"GAS_PEDAL": int(gas)}
+    return self.packer.make_can_msg_safety("PEDAL", BYD_CANBUS_ESC, values)
 
-  def test_cruise_buttons(self):
-    buttons = ("SET_BTN", "RES_BTN", "LKAS_ON_BTN", "DEC_DISTANCE_BTN", "INC_DISTANCE_BTN", "ACC_ON_BTN")
-    for cruise_engaged, controls_allowed in itertools.product((False, True), repeat=2):
-      self.assertTrue(self._rx(self._pcm_status_msg(cruise_engaged)))
-      self.safety.set_controls_allowed(controls_allowed)
-      for pressed in itertools.product((False, True), repeat=len(buttons)):
-        values = dict(zip(buttons, pressed, strict=True))
-        values.update(SET_ME_1_1=1, SET_ME_1_2=1)
-        with self.subTest(cruise_engaged=cruise_engaged, controls_allowed=controls_allowed, buttons=pressed):
-          msg = self.packer.make_can_msg_safety("PCM_BUTTONS", self.MAIN_BUS, values)
-          should_tx = not any(pressed[:-1]) and (not pressed[-1] or cruise_engaged)
-          self.assertEqual(should_tx, self._tx(msg))
+  def _pcm_status_msg(self, enable):
+    values = {"ACC_ON_1": int(enable), "ACC_ON_2": int(enable), "CMD_REQ_ACTIVE_LOW": int(not enable)}
+    return self.packer.make_can_msg_safety("ACC_CMD", BYD_CANBUS_MPC, values)
 
-  def test_rx_checksums(self):
-    for name, bus, signal, initial, corrupt in (
-      ("WHEELSPEED_CLEAN", self.MAIN_BUS, "WHEELSPEED_CLEAN", 72, 0),
-      ("ACC_HUD_ADAS", self.CAM_BUS, "ACC_STATE", 0, 3),
-    ):
-      for byte in range(8):
-        with self.subTest(message=name, byte=byte):
-          self.safety.set_safety_hooks(CarParams.SafetyModel.byd, 0)
-          self.safety.init_tests()
-          for _ in range(16):
-            msg = self.packer.make_can_msg_safety(name, bus, {signal: initial})
-            self.assertTrue(self._rx(msg))
-          speed_min = self.safety.get_vehicle_speed_min()
-          speed_max = self.safety.get_vehicle_speed_max()
-          msg = self.packer.make_can_msg_safety(name, bus, {signal: corrupt})
-          msg[0].data[byte] ^= 0xFF
-          self.safety.set_controls_allowed(name == "WHEELSPEED_CLEAN")
-          self.assertFalse(self._rx(msg))
-          self.assertFalse(self.safety.get_controls_allowed())
-          self.assertEqual(speed_min, self.safety.get_vehicle_speed_min())
-          self.assertEqual(speed_max, self.safety.get_vehicle_speed_max())
+  # MADS button / ACC main are not wired up for BYD; leave abstract to skip those tests
+  def _lkas_button_msg(self, enabled):
+    raise NotImplementedError
 
-  def test_rx_counters(self):
-    for name, bus, signal, value in (
-      ("WHEELSPEED_CLEAN", self.MAIN_BUS, "WHEELSPEED_CLEAN", 72),
-      ("ACC_HUD_ADAS", self.CAM_BUS, "ACC_STATE", 3),
-    ):
-      with self.subTest(message=name):
-        # Check both counter locations and rollover with valid checksums.
-        for _ in range(32):
-          msg = self.packer.make_can_msg_safety(name, bus, {signal: value})
-          self.assertTrue(self._rx(msg))
-        self.safety.set_controls_allowed(True)
-        # Replayed frames are rejected after the common counter tolerance.
-        for i in range(common.MAX_WRONG_COUNTERS + 1):
-          should_rx = i < common.MAX_WRONG_COUNTERS - 1
-          self.assertEqual(should_rx, self._rx(msg))
-          self.assertEqual(should_rx, self.safety.get_controls_allowed())
-        # A valid sequence clears the counter faults.
-        for _ in range(common.MAX_WRONG_COUNTERS):
-          msg = self.packer.make_can_msg_safety(name, bus, {signal: 0})
-          self.assertTrue(self._rx(msg))
+  def _acc_state_msg(self, enabled):
+    values = {"ACC_ON1": int(enabled), "ACC_ON2": int(enabled)}
+    return self.packer.make_can_msg_safety("ACC_HUD_ADAS", BYD_CANBUS_MPC, values)
 
-  def test_angle_cmd_when_enabled(self):
-    # We properly test lateral acceleration and jerk below
-    pass
 
-  def test_lateral_accel_limit(self):
-    for speed in np.linspace(0, 40, 100):
-      speed = max(speed, 1)
-      # match both CAN encoding (0.1 kph/LSB) and VEHICLE_SPEED_FACTOR=1000 rounding in UPDATE_VEHICLE_SPEED
-      sent = speed + 1
-      sent_can = away_round(sent / 0.1 * 3.6) * 0.1 / 3.6
-      speed = round(sent_can * 1000) / 1000 - 1
-      for sign in (-1, 1):
-        self.safety.set_controls_allowed(True)
-        self._reset_speed_measurement(speed + 1)  # safety fudges the speed
+class TestBydAtto3GeneralSafety(BydAtto3GeneralSafetyBase):
+  pass
 
-        max_angle_float = get_max_angle_vm(speed, self.VM, CarControllerParams)
 
-        # at limit (safety tolerance adds 1 CAN unit)
-        max_angle_can = safety_max_can(max_angle_float)
-        max_angle_can = min(max_angle_can, self.STEER_ANGLE_MAX * self.DEG_TO_CAN)
-        max_angle = sign * max_angle_can / self.DEG_TO_CAN
-        self.safety.set_desired_angle_last(sign * max_angle_can)
+class TestBydAngleGenericSafety(common.CarSafetyTest, common.AngleSteeringSafetyTest):
+  """Safety coverage for generic DBC angle platforms (SEAL/TENGSHI/QIN_L)."""
+  TX_MSGS = BYD_ANGLE_GENERIC_TX_MSGS
+  RELAY_MALFUNCTION_ADDRS = BYD_ANGLE_GENERIC_RELAY_MALFUNCTION_ADDRS
+  FWD_BLACKLISTED_ADDRS = BYD_ANGLE_GENERIC_FWD_BLACKLISTED_ADDRS
+  FWD_BUS_LOOKUP = BYD_ANGLE_GENERIC_FWD_BUS_LOOKUP
+  STEER_ANGLE_MAX = 64
+  DEG_TO_CAN = 10
+  ANGLE_RATE_BP = [0., 30., 60.]
+  ANGLE_RATE_UP = [5., 1.5, 0.5]
+  ANGLE_RATE_DOWN = [5., 1.5, 0.5]
+  LATERAL_FREQUENCY = 50
+  FLAGS = BYD_FLAG_ANGLE_MODE
 
-        self.assertTrue(self._tx(self._angle_cmd_msg(max_angle, True)))
+  def setUp(self):
+    # common.SafetyTestBase.setUp re-applies the hooks from these; set them to
+    # match what this class configures so the super() call is a no-op repeat.
+    self.SAFETY_MODEL = CarParams.SafetyModel.byd
+    self.SAFETY_PARAM = self.FLAGS
+    self.packer = CANPackerSafety("byd_generic_pt")
+    self.safety = libsafety_py.libsafety
+    self.safety.set_safety_hooks(CarParams.SafetyModel.byd, self.FLAGS)
+    self.safety.init_tests()
+    super().setUp()
 
-        # 1 unit above limit
-        over_can = safety_max_can(max_angle_float, 1)
-        over_can_clipped = min(over_can, self.STEER_ANGLE_MAX * self.DEG_TO_CAN)
-        over_angle = sign * over_can_clipped / self.DEG_TO_CAN
-        self._tx(self._angle_cmd_msg(over_angle, True))
+  def _angle_cmd_msg(self, angle: float, enabled: bool, increment_timer: bool = True):
+    values = {"sig_kqgoqc": angle, "sig_ausukb": int(enabled)}
+    return self.packer.make_can_msg_safety("CID_TCDUBH", BYD_CANBUS_ESC, values)
 
-        # at low speeds max angle is above STEER_ANGLE_MAX, so adding 1 has no effect
-        should_tx = over_can >= self.STEER_ANGLE_MAX * self.DEG_TO_CAN
-        self.assertEqual(should_tx, self._tx(self._angle_cmd_msg(over_angle, True)))
+  def _angle_meas_msg(self, angle: float):
+    return self.packer.make_can_msg_safety("CID_VSUYVS", BYD_CANBUS_ESC, {"sig_uefwof": angle})
 
-  def test_lateral_jerk_limit(self):
-    for speed in np.linspace(0, 40, 100):
-      speed = max(speed, 1)
-      # match both CAN encoding (0.1 kph/LSB) and VEHICLE_SPEED_FACTOR=1000 rounding in UPDATE_VEHICLE_SPEED
-      sent = speed + 1
-      sent_can = away_round(sent / 0.1 * 3.6) * 0.1 / 3.6
-      speed = round(sent_can * 1000) / 1000 - 1
-      for sign in (-1, 1):
-        self.safety.set_controls_allowed(True)
-        self._reset_speed_measurement(speed + 1)  # safety fudges the speed
-        self._tx(self._angle_cmd_msg(0, True))
+  def _speed_msg(self, speed):
+    return self.packer.make_can_msg_safety("CID_QXPDTS", BYD_CANBUS_ESC, {"sig_mniqdb": speed})
 
-        max_delta_float = get_max_angle_delta_vm(speed, self.VM, CarControllerParams)
+  def _speed_msg_2(self, speed: float):
+    return None
 
-        # Stay within limits
-        # Up
-        max_delta_can = safety_max_can(max_delta_float)
-        max_angle_delta = sign * max_delta_can / self.DEG_TO_CAN
-        self.assertTrue(self._tx(self._angle_cmd_msg(max_angle_delta, True)))
+  def _user_brake_msg(self, brake):
+    return self.packer.make_can_msg_safety("CID_GDWRBP", BYD_CANBUS_ESC, {"sig_wrfhru": int(brake)})
 
-        # Don't change
-        self.assertTrue(self._tx(self._angle_cmd_msg(max_angle_delta, True)))
+  def _user_gas_msg(self, gas):
+    return self.packer.make_can_msg_safety("CID_GDWRBP", BYD_CANBUS_ESC, {"sig_oefitp": int(gas)})
 
-        # Down
-        self.assertTrue(self._tx(self._angle_cmd_msg(0, True)))
+  def _pcm_status_msg(self, enable):
+    return self.packer.make_can_msg_safety("CID_XQYNBW", BYD_CANBUS_MPC, {"sig_hprcqm": 3 if enable else 0})
 
-        # Inject too high rates
-        # Up
-        over_delta_can = safety_max_can(max_delta_float, 1)
-        max_angle_delta = sign * over_delta_can / self.DEG_TO_CAN
-        self.assertFalse(self._tx(self._angle_cmd_msg(max_angle_delta, True)))
+  def _lkas_button_msg(self, enabled):
+    raise NotImplementedError
 
-        # Don't change
-        self.safety.set_desired_angle_last(sign * over_delta_can)
-        self.assertTrue(self._tx(self._angle_cmd_msg(max_angle_delta, True)))
+  def _acc_state_msg(self, enabled):
+    return self.packer.make_can_msg_safety("CID_XQYNBW", BYD_CANBUS_MPC, {"sig_hprcqm": 2 if enabled else 0})
 
-        # Down
-        self.assertFalse(self._tx(self._angle_cmd_msg(0, True)))
 
-        # Recover
-        self.assertTrue(self._tx(self._angle_cmd_msg(0, True)))
+class TestBydYuanPlusAtto3Safety(BydAtto3GeneralSafetyBase):
+  FLAGS = BYD_FLAG_YUAN_PLUS_DMI_ATTO3
+
+
 if __name__ == "__main__":
   unittest.main()

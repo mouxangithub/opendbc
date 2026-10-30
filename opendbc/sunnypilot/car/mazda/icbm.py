@@ -9,7 +9,7 @@ from opendbc.car import structs, DT_CTRL
 from opendbc.car.can_definitions import CanData
 from opendbc.car.mazda import mazdacan
 from opendbc.car.mazda.values import Buttons
-from opendbc.sunnypilot.car.icbm_actuation_profile import get_actuation_profile
+from opendbc.sunnypilot.car.icbm_actuation_profile import get_actuation_profile, tap_equivalent
 from opendbc.sunnypilot.car.intelligent_cruise_button_management_interface_base import IntelligentCruiseButtonManagementInterfaceBase
 
 ButtonType = structs.CarState.ButtonEvent.Type
@@ -46,7 +46,7 @@ class IntelligentCruiseButtonManagementInterface(IntelligentCruiseButtonManageme
       return can_sends
 
     if self.ICBM.sendButton != SendButtonState.none:
-      send_button = BUTTONS[self.ICBM.sendButton]
+      send_button = BUTTONS[tap_equivalent(self.ICBM.sendButton)]
       since_last_send = (self.frame - self.last_button_frame) * DT_CTRL
 
       if CC_SP.zoompilot.icbmHold:

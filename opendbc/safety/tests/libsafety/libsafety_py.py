@@ -22,7 +22,11 @@ def _build_libsafety(release: bool = False) -> str:
     '-g', '-O0', '-fno-omit-frame-pointer',
   ]
   # Coverage must exclude the branches inserted by UBSan.
-  if os.environ.get("SAFETY_COVERAGE") == "1":
+  # SAFETY_NO_SANITIZERS=1 builds without either runtime, for hosts whose
+  # toolchain ships no ubsan/profile runtime (e.g. AGNOS on the comma three).
+  if os.environ.get("SAFETY_NO_SANITIZERS") == "1":
+    ldflags = []
+  elif os.environ.get("SAFETY_COVERAGE") == "1":
     ldflags = ['-fprofile-arcs', '-ftest-coverage'] if not release else []
   else:
     ldflags = ['-fsanitize=undefined', '-fno-sanitize-recover=undefined']
@@ -46,7 +50,10 @@ def cdef_from_file(path: Path) -> str:
   source = re.sub(r"__attribute__\(\(.*\)\)", "", source)
 
   # Keep integer constants, type declarations, and function signatures, including definitions.
-  constants = re.findall(r"^#define \w+ \d+[UuLl]*[ \t]*$", source, re.MULTILINE)
+  # Leading whitespace is allowed so defines inside #ifdef blocks (can.h's STM32F4/CANFD split)
+  # are captured; the last definition wins, which for can.h is the non-F4 (CANFD) branch —
+  # matching how safety.c is compiled for the test harness.
+  constants = re.findall(r"^[ \t]*#define \w+ \d+[UuLl]*[ \t]*$", source, re.MULTILINE)
   types = re.findall(r"^(?:typedef|struct|enum)\b(?:[^;{]|\{[^}]*\})+;", source, re.MULTILINE)
   functions = re.findall(r"^((?!typedef\b)\w[\w *]*\b\w+\([^;{}]*\))\s*[;{]", source, re.MULTILINE)
   return "\n".join([*constants, *types, *(f"{signature};" for signature in dict.fromkeys(functions))])

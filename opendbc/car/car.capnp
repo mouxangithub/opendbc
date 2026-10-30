@@ -205,6 +205,50 @@ struct CarState {
   blockPcmEnable @60 :Bool;  # whether to allow PCM to enable this frame
   carNotReady @61 :Bool;  # car is transiently refusing engagement, used to prevent a fault if engaged
 
+  # Gap/personality the car's own cruise control reports, for cars where the PCM owns
+  # the distance button. 0 = the vehicle does not report it, 1..4 = its gap setting.
+  # Used to sync LongitudinalPersonality when the driver cycles gaps on a
+  # PCM-controlled car, instead of counting presses blindly. Ported from cp.
+  pcmCruiseGap @62 :Int16;
+
+  # Soft-hold state while cruise is cancelled, published from the cruise helper:
+  # 0 = not active, 1 = ready, 2 = activated. Lets brand controllers hold the car after a
+  # cancel instead of resuming normally. Ported from cp.
+  softHoldActive @63 :Int16;
+  # Set by the cruise helper when the car should be auto-engaged (GM auto-cruise).
+  # A request, not a command: the brand controller still decides how to press the button.
+  activateCruise @64 :Int16;
+
+  # Stock-navigation CAN state (cp L6). Filled by the Hyundai carstate when the car's own
+  # head unit broadcasts its route profile on 0x4B4/0x4B9/0x4BE; carrot's navi gates read
+  # them so VehicleNaviCanControl finally has its data source.
+  speedBumpDistance @65 :Float32;
+  schoolZoneActive @66 :Bool;
+  vehicleNaviActive @67 :Bool;
+  vehicleNaviSectionActive @68 :Bool;
+  vehicleNaviSpeed @69 :Float32;
+  vehicleNaviAvailable @70 :Bool;
+
+  # Bind independent radar decoding (radarcan) to the exact CAN batch and ego
+  # state used by card. Empty batches still represent a control tick; receiveMonoTime
+  # is monotonic and must not be replaced by the later publication timestamp.
+  radarInput @71 :RadarInput;
+
+  # Cluster-to-body speed ratio, so a consumer can scale a speed target the way
+  # the dashboard would show it. 0 means "not measured" and must be treated as
+  # 1.0 by the reader: the cluster can legitimately read 0 at standstill, and a
+  # ratio of 0 would otherwise erase the target. carrotpilot carries the same
+  # value at a different ordinal; this is an append, not a copy.
+  vCluRatio @72 :Float32;
+
+  # Distance to the camera-read speed-limit sign, when the platform provides it.
+  # The unit is metres and a non-positive value means "unknown".
+  speedLimitDistance @73 :Float32;
+
+  # Free-form per-frame carrot debug string. Empty unless a carrot diagnostic
+  # path fills it; kept short so a log segment stays bounded.
+  logCarrot @74 :Text;
+
   # cruise state
   cruiseState @10 :CruiseState;
 
@@ -225,6 +269,15 @@ struct CarState {
   # blindspot sensors
   leftBlindspot @33 :Bool;  # Is there something blocking the left lane change
   rightBlindspot @34 :Bool; # Is there something blocking the right lane change
+  # Source-aware blindspot split (cp c6566c65a): the merged left/rightBlindspot
+  # above is the OR of these two sources. cp's CarState fills @75-94 with its
+  # own fields, so its @95-99 ordinals cannot be copied here — capnp forbids
+  # ordinal holes, and this fork's CarState ends at @74. Append instead.
+  leftBlindspotOem @75 :Bool;  # vehicle BSD-only left source before ONNX merge
+  rightBlindspotOem @76 :Bool; # vehicle BSD-only right source before ONNX merge
+  leftBlindspotOnnx @77 :Bool; # ONNX BSD-only left source
+  rightBlindspotOnnx @78 :Bool; # ONNX BSD-only right source
+  blindspotSplitSourcesValid @79 :Bool; # split blindspot source fields are valid and should be trusted
 
   fuelGauge @41 :Float32; # battery or fuel tank level from [0.0, 1.0]
   charging @43 :Bool;
@@ -281,7 +334,19 @@ struct CarState {
       setCruise @9;
       resumeCruise @10;
       gapAdjustCruise @11;
+      lfaButton @12;
+      paddleLeft @13;
+      paddleRight @14;
     }
+  }
+
+  # Bind independent radar decoding (radarcan) to the exact CAN batch and ego
+  # state used by card. Empty batches still represent a control tick.
+  struct RadarInput {
+    firstCanMonoTime @0 :UInt64;
+    lastCanMonoTime @1 :UInt64;
+    canPacketCount @2 :UInt32;
+    receiveMonoTime @3 :UInt64;
   }
 
   deprecated :group {
@@ -303,6 +368,9 @@ struct CarState {
 struct RadarData @0x888ad6581cf0aacb {
   errors @3 :Error;
   points @1 :List(RadarPoint);
+  radarTrackFlipped @4 :Bool;  # frontRadar yRel/yvRel already inverted by RadarTrackFlip
+  displayPoints @5 :List(RadarPoint); # full-track objects kept separate from the control points
+  hasDisplayData @6 :Bool;     # marks a display stream as supported; kept set even when empty/starting/faulted
 
   struct Error {
     canError @0 :Bool;
@@ -318,12 +386,14 @@ struct RadarData @0x888ad6581cf0aacb {
     dRel @1 :Float32;    # m from the front bumper of the car
     yRel @2 :Float32;    # m
     vRel @3 :Float32;    # m/s
-
-    deprecated :group {
-      aRel @4 :Float32; # m/s^2
-      yvRel @5 :Float32; # m/s
-      measured @6 :Bool;  # measurement VS estimate flag
-    }
+    aRel @4 :Float32;    # m/s^2
+    yvRel @5 :Float32;   # m/s
+    measured @6 :Bool;   # measurement VS estimate flag
+    vLead @7 :Float32;   # absolute lead speed (m/s)
+    radarSource @8 :Text; # "scc", "radar", etc.
+    aLead @9 :Float32;   # filtered lead accel (m/s^2), written by radar_tracks
+    jLead @10 :Float32;  # filtered lead jerk (m/s^3), written by radar_tracks
+    trackState @11 :UInt8; # radar-native object state; 0 when unavailable
   }
 
   enum ErrorDEPRECATED {
@@ -409,6 +479,15 @@ struct CarControl {
     leftLaneDepart @9: Bool;
     leadDistanceBars @10: Int8;  # 1-3: 1 is closest, 3 is farthest. some ports may utilize 2-4 bars instead
 
+  # Carrot navigation state, for brand controllers that surface it on the cluster.
+  # activeCarrot mirrors carrotManSP.activeCarrot (3 = decelerating for a speed camera
+  # or other hazard, 1/2 = advisory); atcDistance is the distance to the turn the ATC
+  # advisory refers to. Read-only presentation values - they never command anything,
+  # which is why they live in HUDControl rather than in Actuators.
+  activeCarrot @11: Int32;
+  atcDistance @12: Float32;
+
+
     # not used with the dash, TODO: separate structs for dash UI and device UI
     audibleAlert @5: AudibleAlert;
 
@@ -475,6 +554,17 @@ struct CarParams {
   minEnableSpeed @7 :Float32;
   minSteerSpeed @8 :Float32;
   steerAtStandstill @77 :Bool;  # is steering available at standstill? just check if it faults
+
+  # Carrot/fork capability bits that do not belong in the safety-relevant `flags`
+  # enum: optional sensor groups, cluster features and other "what does this car
+  # actually broadcast" facts detected at fingerprint time. Kept separate so adding
+  # one cannot disturb HyundaiFlags, whose values the panda safety code reads.
+  extFlags @78 :UInt32;
+
+  # Period at which the radar broadcasts object frames, when the platform documents one.
+  # Lets the track filters use the right dt instead of estimating it from arrival times.
+  radarTimeStep @79 :Float32;
+
   safetyConfigs @62 :List(SafetyConfig);
   alternativeExperience @65 :Int16;      # panda flag for features like no disengage on gas
 

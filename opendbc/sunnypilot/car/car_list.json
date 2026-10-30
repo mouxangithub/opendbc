@@ -211,6 +211,298 @@
     ],
     "package": "Driver Confidence Package 2"
   },
+  "BYD ATTO3 2022-24": {
+    "platform": "BYD_ATTO3",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "ATTO3",
+    "year": [
+      "2022",
+      "2023",
+      "2024"
+    ],
+    "package": "All"
+  },
+  "BYD Frigate 07 DMI 2024": {
+    "platform": "BYD_FRIGATE_07_DMI",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "Frigate 07 DMI",
+    "year": [
+      "2024"
+    ],
+    "package": "All"
+  },
+  "BYD HAN DM 2020": {
+    "platform": "BYD_HAN_DM_20",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "HAN DM",
+    "year": [
+      "2020"
+    ],
+    "package": "All"
+  },
+  "BYD Han DMI 22J 2022": {
+    "platform": "BYD_HAN_DMI_22J",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "Han DMI 22J",
+    "year": [
+      "2022"
+    ],
+    "package": "All"
+  },
+  "BYD Han DMI 22R 2022": {
+    "platform": "BYD_HAN_DMI_22R",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "Han DMI 22R",
+    "year": [
+      "2022"
+    ],
+    "package": "All"
+  },
+  "BYD HAN DMI 2022": {
+    "platform": "BYD_HAN_DMI_22",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "HAN DMI",
+    "year": [
+      "2022"
+    ],
+    "package": "All"
+  },
+  "BYD HAN DMI 2025": {
+    "platform": "BYD_HAN_DMI_25",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "HAN DMI",
+    "year": [
+      "2025"
+    ],
+    "package": "All"
+  },
+  "BYD HAN EV 2020": {
+    "platform": "BYD_HAN_EV_20",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "HAN EV",
+    "year": [
+      "2020"
+    ],
+    "package": "All"
+  },
+  "BYD Qin L DMI 2024": {
+    "platform": "BYD_QIN_L_DMI",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "Qin L DMI",
+    "year": [
+      "2024"
+    ],
+    "package": "All"
+  },
+  "BYD QIN PLUS DMI 2023": {
+    "platform": "BYD_QIN_PLUS_DMI_23",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "QIN PLUS DMI",
+    "year": [
+      "2023"
+    ],
+    "package": "All"
+  },
+  "BYD Qin Pro 2021": {
+    "platform": "BYD_QIN_PRO",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "Qin Pro",
+    "year": [
+      "2021"
+    ],
+    "package": "All"
+  },
+  "BYD Seal 06 DMI 2024": {
+    "platform": "BYD_SEAL_06_DMI",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "Seal 06 DMI",
+    "year": [
+      "2024"
+    ],
+    "package": "All"
+  },
+  "BYD Seal 07 DMI 2025": {
+    "platform": "BYD_SEAL_07_DMI",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "Seal 07 DMI",
+    "year": [
+      "2025"
+    ],
+    "package": "All"
+  },
+  "BYD SEAL 2023": {
+    "platform": "BYD_SEAL_23",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "SEAL",
+    "year": [
+      "2023"
+    ],
+    "package": "All"
+  },
+  "BYD SEAL EV 2022": {
+    "platform": "BYD_SEAL_EV_22",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "SEAL EV",
+    "year": [
+      "2022"
+    ],
+    "package": "All"
+  },
+  "BYD SONG L DMI 2024": {
+    "platform": "BYD_SONG_L_DMI_24",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "SONG L DMI",
+    "year": [
+      "2024"
+    ],
+    "package": "All"
+  },
+  "BYD SONG PLUS DMI 2021": {
+    "platform": "BYD_SONG_PLUS_DMI_21",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "SONG PLUS DMI",
+    "year": [
+      "2021"
+    ],
+    "package": "All"
+  },
+  "BYD SONG PLUS DMI 2022": {
+    "platform": "BYD_SONG_PLUS_DMI_22",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "SONG PLUS DMI",
+    "year": [
+      "2022"
+    ],
+    "package": "All"
+  },
+  "BYD SONG PLUS DMI 2023": {
+    "platform": "BYD_SONG_PLUS_DMI_23",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "SONG PLUS DMI",
+    "year": [
+      "2023"
+    ],
+    "package": "All"
+  },
+  "BYD SONG PRO DMI 2022": {
+    "platform": "BYD_SONG_PRO_DMI_22",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "SONG PRO DMI",
+    "year": [
+      "2022"
+    ],
+    "package": "All"
+  },
+  "BYD Tang DM 2021": {
+    "platform": "BYD_TANG_DM",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "Tang DM",
+    "year": [
+      "2021"
+    ],
+    "package": "All"
+  },
+  "BYD TANG DMI 2021": {
+    "platform": "BYD_TANG_DMI_21",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "TANG DMI",
+    "year": [
+      "2021"
+    ],
+    "package": "All"
+  },
+  "BYD TANG DMI 2024": {
+    "platform": "BYD_TANG_DMI_24",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "TANG DMI",
+    "year": [
+      "2024"
+    ],
+    "package": "All"
+  },
+  "BYD TANG DMP 2022": {
+    "platform": "BYD_TANG_DMP_22",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "TANG DMP",
+    "year": [
+      "2022"
+    ],
+    "package": "All"
+  },
+  "BYD TANG DMP 2023": {
+    "platform": "BYD_TANG_DMP_23",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "TANG DMP",
+    "year": [
+      "2023"
+    ],
+    "package": "All"
+  },
+  "BYD Tengshi D9 22R 2022": {
+    "platform": "BYD_TENGSHI_D9_22R",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "Tengshi D9 22R",
+    "year": [
+      "2022"
+    ],
+    "package": "All"
+  },
+  "BYD TENGSHI D9 2022": {
+    "platform": "BYD_TENGSHI_D9_22",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "TENGSHI D9",
+    "year": [
+      "2022"
+    ],
+    "package": "All"
+  },
+  "BYD TENGSHI D9 2024": {
+    "platform": "BYD_TENGSHI_D9_24",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "TENGSHI D9",
+    "year": [
+      "2024"
+    ],
+    "package": "All"
+  },
+  "BYD Yuan Plus DMI 2022": {
+    "platform": "BYD_YUAN_PLUS_DMI_22",
+    "make": "BYD",
+    "brand": "byd",
+    "model": "Yuan Plus DMI",
+    "year": [
+      "2022"
+    ],
+    "package": "All"
+  },
   "Cadillac Escalade 2017": {
     "platform": "CADILLAC_ESCALADE",
     "make": "Cadillac",
@@ -2577,6 +2869,14 @@
     ],
     "package": "All"
   },
+  "Lexus ES 2022-26 PATCHED": {
+    "platform": "LEXUS_ES_PATCHED",
+    "make": "Lexus",
+    "brand": "toyota",
+    "model": "ES 2022-26 PATCHED",
+    "year": [],
+    "package": "All"
+  },
   "Lexus ES Hybrid 2017-18": {
     "platform": "LEXUS_ES",
     "make": "Lexus",
@@ -4060,6 +4360,17 @@
     ],
     "package": "All"
   },
+  "Toyota RAV4 Prime 2023-24": {
+    "platform": "TOYOTA_RAV4_PRIME_PATCHED",
+    "make": "Toyota",
+    "brand": "toyota",
+    "model": "RAV4 Prime",
+    "year": [
+      "2023",
+      "2024"
+    ],
+    "package": "All"
+  },
   "Toyota Sienna 2018-20": {
     "platform": "TOYOTA_SIENNA",
     "make": "Toyota",
@@ -4081,6 +4392,37 @@
       "2021",
       "2022",
       "2023"
+    ],
+    "package": "All"
+  },
+  "Toyota Sienna 2021-26 PATCHED": {
+    "platform": "TOYOTA_SIENNA_PATCHED",
+    "make": "Toyota",
+    "brand": "toyota",
+    "model": "Sienna 2021-26 PATCHED",
+    "year": [],
+    "package": "All"
+  },
+  "Toyota Wildlander PHEV 2021-23": {
+    "platform": "TOYOTA_WILDLANDER_PHEV",
+    "make": "Toyota",
+    "brand": "toyota",
+    "model": "Wildlander PHEV",
+    "year": [
+      "2021",
+      "2022",
+      "2023"
+    ],
+    "package": "All"
+  },
+  "Toyota Wildlander PHEV 2023-24": {
+    "platform": "TOYOTA_WILDLANDER_PHEV_PATCHED",
+    "make": "Toyota",
+    "brand": "toyota",
+    "model": "Wildlander PHEV",
+    "year": [
+      "2023",
+      "2024"
     ],
     "package": "All"
   },
