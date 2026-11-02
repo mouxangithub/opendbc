@@ -2,11 +2,12 @@
 from opendbc.can import CANParser
 from opendbc.car import Bus
 from opendbc.car.structs import RadarData
-from opendbc.car.toyota.values import DBC, ToyotaFlags
+from opendbc.car.toyota.values import DBC, ToyotaFlags, CanBus
 from opendbc.car.interfaces import RadarInterfaceBase
+from opendbc.car.toyota.ars510_carrot import is_supported_ars510, use_ars510
 
 
-def _create_radar_can_parser(CP):
+def _create_radar_can_parser(CP, bus=1):
   if CP.flags & ToyotaFlags.TSS2:
     RADAR_A_MSGS = list(range(0x180, 0x190))
     RADAR_B_MSGS = list(range(0x190, 0x1a0))
@@ -20,10 +21,22 @@ def _create_radar_can_parser(CP):
 
   messages.append(('STATUS_MSG', 10))
 
-  return CANParser(DBC[CP.carFingerprint][Bus.radar], messages, 1)
+  return CANParser(DBC[CP.carFingerprint][Bus.radar], messages, bus)
 
 
 class RadarInterface(RadarInterfaceBase):
+  ARS510_CARROT_API = 1
+  ARS510_CARROT_PROFILE = "fused"
+  supports_ars510 = staticmethod(is_supported_ars510)
+
+  def __new__(cls, CP, CP_SP=None):
+    # Opt-in ARS510 receive path (radar-DBC-less Toyota cars). When the gate is
+    # off this is a no-op and every other Toyota keeps the stock CAN parser.
+    from opendbc.car.toyota.ars510_carrot import Ars510RadarInterface
+    if cls is RadarInterface and use_ars510(CP):
+      return Ars510RadarInterface(CP, CP_SP)
+    return super().__new__(cls)
+
   def __init__(self, CP, CP_SP):
     super().__init__(CP, CP_SP)
 
@@ -36,7 +49,7 @@ class RadarInterface(RadarInterfaceBase):
 
     self.valid_cnt = {key: 0 for key in self.RADAR_A_MSGS}
 
-    self.rcp = None if CP.radarUnavailable else _create_radar_can_parser(CP)
+    self.rcp = None if CP.radarUnavailable else _create_radar_can_parser(CP, CanBus(CP).alt)
     self.trigger_msg = self.RADAR_B_MSGS[-1]
     self.updated_messages = set()
 
@@ -86,6 +99,11 @@ class RadarInterface(RadarInterfaceBase):
           self.pts[ii].dRel = cpt['LONG_DIST']  # from front of car
           self.pts[ii].yRel = -cpt['LAT_DIST']  # in car frame's y axis, left is positive
           self.pts[ii].vRel = cpt['REL_SPEED']
+          self.pts[ii].vLead = self.pts[ii].vRel + self.v_ego
+          # mark as a measured emission so radard/primary.py keeps the point
+          # (upstream drops anything with measured=False)
+          self.pts[ii].measured = True
+          self.pts[ii].radarSource = "frontRadar"
         else:
           if ii in self.pts:
             del self.pts[ii]

@@ -137,6 +137,7 @@ class CANParser:
     self.can_invalid_cnt: int = CAN_INVALID_CNT
     self.last_nonempty_nanos: int = 0
     self._last_update_nanos: int = 0
+    self._updated_lists: list[list[float]] = []
 
   def _add_message(self, name_or_addr: str | int, freq: int | None = None) -> None:
     if isinstance(name_or_addr, numbers.Number):
@@ -202,9 +203,11 @@ class CANParser:
     if strings and not isinstance(strings[0], list | tuple):
       strings = [strings]
 
-    for addr in self.addresses:
-      for k in self.vl_all[addr]:
-        self.vl_all[addr][k].clear()
+    # Only lists populated by the previous update need clearing. Retain their
+    # identity: vl_all aliases and consumers holding a list see the same clear.
+    for values in self._updated_lists:
+      values.clear()
+    self._updated_lists.clear()
 
     updated_addrs: set[int] = set()
     for entry in strings:
@@ -219,6 +222,8 @@ class CANParser:
         if state is None or len(dat) > 64:
           continue
         if state.parse(t, dat):
+          if address not in updated_addrs:
+            self._updated_lists.extend(state.all_vals)
           updated_addrs.add(address)
 
           vl_addr = self.vl[address]

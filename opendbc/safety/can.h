@@ -3,7 +3,17 @@
 static const unsigned char dlc_to_len[] = {0U, 1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U, 12U, 16U, 20U, 24U, 32U, 48U, 64U};
 
 #define CANPACKET_HEAD_SIZE 6U  // non-data portion of CANPacket_t
-#define CANPACKET_DATA_SIZE_MAX 64U
+// A classic CAN controller can never carry more than 8 data bytes, and the
+// comma three's dos panda is bxCAN only. Sizing the packet for CAN FD there
+// makes CANPacket_t 72 bytes instead of 16, which is what pushed the F4's
+// CAN rings past the top of RAM. CANFD doubles as the compile time gate that
+// keeps CAN FD only safety modes out of a classic build.
+#ifdef STM32F4
+  #define CANPACKET_DATA_SIZE_MAX 8U
+#else
+  #define CANFD
+  #define CANPACKET_DATA_SIZE_MAX 64U
+#endif
 
 typedef struct {
   unsigned char fd : 1;
