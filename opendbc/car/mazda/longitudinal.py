@@ -24,6 +24,9 @@ RELEASE_SETTLE_FRAMES = int(1.0 / DT_CTRL)
 RELEASE_ACCEL = 0.25  # m/s^2
 # The still-stopped breakaway ramp gives up after this.
 BREAKAWAY_FRAMES = int(3.0 / DT_CTRL)
+# The release keeps stock's ramp for this long: stock's own release pulses (1-6 wire frames from
+# about 3 after the stop bits drop, latched ones up to 0.20 s) all fall inside it.
+RELEASE_SHAPE_FRAMES = int(0.2 / DT_CTRL)
 # leadVisible toggles 2.3 times a minute while moving, half its runs under 0.6 s, mostly on a
 # marginal lead past 100 m. Showing it after 0.5 s and dropping it after 1.0 s leaves under one
 # change a minute (routes 25e-2c1, 4a3fe2b0e8aec968/0000006e).
@@ -165,9 +168,13 @@ class AccelShaper:
         # at the relaxed command until the body lets go.
         accel = self.release_ramp
         if not (sm.latched_release and body_hold):
+          quick = breakaway and self.breakaway_frames > RELEASE_SHAPE_FRAMES
+          ramp = CarControllerParams.ACCEL_BREAKAWAY_RAMP if quick else CarControllerParams.ACCEL_RELEASE_RAMP
+          if sm.resume_unlatching:
+            # Stay under the pulse's clamp so the command cannot step up when it lifts.
+            ramp_ceiling = min(ramp_ceiling, CarControllerParams.ACCEL_RESUME_PULSE_MAX)
           # Follow a falling plan ceiling at the winddown limit.
-          self.release_ramp = max(min(self.release_ramp + CarControllerParams.ACCEL_RELEASE_RAMP * DT_CTRL, ramp_ceiling),
-                                  self.release_ramp + CarControllerParams.ACCEL_WINDDOWN_LIMIT)
+          self.release_ramp = rate_limit(ramp_ceiling, self.release_ramp, CarControllerParams.ACCEL_WINDDOWN_LIMIT, ramp * DT_CTRL)
       else:
         self.release_ramp = None
         # Track overrides in accel_last so control resumes through the slew limiter.
