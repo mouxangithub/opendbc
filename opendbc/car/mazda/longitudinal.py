@@ -24,8 +24,7 @@ RELEASE_SETTLE_FRAMES = int(1.0 / DT_CTRL)
 RELEASE_ACCEL = 0.25  # m/s^2
 # The still-stopped breakaway ramp gives up after this.
 BREAKAWAY_FRAMES = int(3.0 / DT_CTRL)
-# The release keeps stock's ramp for this long: stock's own release pulses (1-6 wire frames from
-# about 3 after the stop bits drop, latched ones up to 0.20 s) all fall inside it.
+# Stock's release ramp holds for this long; every stock release pulse falls inside it.
 RELEASE_SHAPE_FRAMES = int(0.2 / DT_CTRL)
 # leadVisible toggles 2.3 times a minute while moving, half its runs under 0.6 s, mostly on a
 # marginal lead past 100 m. Showing it after 0.5 s and dropping it after 1.0 s leaves under one
