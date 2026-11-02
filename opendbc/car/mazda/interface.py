@@ -73,8 +73,7 @@ class CarInterface(CarInterfaceBase):
       ret.pcmCruise = True
       ret.radarUnavailable = True
       ret.stopAccel = -1.0  # stock MRCC standstill command, raw -1024
-      # Between gas, which answers in 0-0.2 s, and the friction brake, at -0.5 m/s2 0.75-0.85 s after a
-      # step of any size (route 0000005f maneuvers).
+      # Gas responds in 0-0.2 s, the friction brake in 0.75-0.85 s.
       ret.longitudinalActuatorDelay = 0.5
 
     carlog.debug({"event": "mazdaRadarVerdict", "radarUnavailable": ret.radarUnavailable,
