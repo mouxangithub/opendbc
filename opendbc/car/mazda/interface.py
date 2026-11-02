@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-import numpy as np
-
 from opendbc.car import Bus, get_safety_config, structs
 from opendbc.car.carlog import carlog
 from opendbc.car.common.conversions import Conversions as CV
@@ -23,12 +21,6 @@ class CarInterface(CarInterfaceBase):
     CarInterfaceBase.__init__(self, CP, CP_SP)
     # The controller runs the radar session; carstate reads its outcome on the next update.
     self.CS.radar_session = self.CC.radar_session
-
-  @staticmethod
-  def get_pid_accel_limits(CP, CP_SP, current_speed, cruise_speed):
-    ceiling = np.interp(current_speed, CarControllerParams.ACCEL_CEILING_BP, CarControllerParams.ACCEL_CEILING_V)
-    fraction = np.interp(cruise_speed - current_speed, CarControllerParams.ACCEL_GAP_BP, CarControllerParams.ACCEL_GAP_FRACTION)
-    return CarControllerParams.ACCEL_MIN, float(ceiling * fraction)
 
   @staticmethod
   def configure_torque_tune(candidate, tune, steering_angle_deadzone_deg=0.0):
@@ -81,7 +73,9 @@ class CarInterface(CarInterfaceBase):
       ret.pcmCruise = True
       ret.radarUnavailable = True
       ret.stopAccel = -1.0  # stock MRCC standstill command, raw -1024
-      ret.longitudinalActuatorDelay = 0.36  # measured ~0.3 s dead time + ~0.3 s first-order lag
+      # Between gas, which answers in 0-0.2 s, and the friction brake, at -0.5 m/s2 0.75-0.85 s after a
+      # step of any size (route 0000005f maneuvers).
+      ret.longitudinalActuatorDelay = 0.5
 
     carlog.debug({"event": "mazdaRadarVerdict", "radarUnavailable": ret.radarUnavailable,
                   "platformClaim": Bus.radar in DBC[candidate], "g46lRadar": g46l_radar, "steerToZeroEps": steer_to_zero})
