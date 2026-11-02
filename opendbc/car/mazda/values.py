@@ -81,10 +81,6 @@ class CarControllerParams:
   ACCEL_BUILD_V = [ACCEL_RELEASE_RAMP, 0.8, 0.8, 0.6]  # m/s3, stock's own 0.6 at highway speed
   # Stock's throttle lift rate, while the plan is still >= 0; a brake request skips it.
   ACCEL_LIFT_LIMIT = -2.0  # m/s3
-  # The accel cap is the ceiling above scaled by the shortfall to the set speed, the way stock closes
-  # a small gap gently (docs/zoompilot/mazda-longitudinal.md, "Gap to the set speed").
-  ACCEL_GAP_BP = [0., 1., 3., 5., 10.]  # m/s under the set speed
-  ACCEL_GAP_FRACTION = [0.38, 0.47, 0.57, 0.72, 1.]  # of ACCEL_CEILING_V
   # Limit upward plan-command slew in the brake region without delaying braking response.
   ACCEL_WINDUP_LIMIT = 4.0 * DT_CTRL     # m/s2 per frame
   ACCEL_WINDDOWN_LIMIT = -10.0 * DT_CTRL  # m/s2 per frame, clips only the p99.9+ steps

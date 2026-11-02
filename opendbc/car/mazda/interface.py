@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-import numpy as np
-
 from opendbc.car import Bus, get_safety_config, structs
 from opendbc.car.carlog import carlog
 from opendbc.car.common.conversions import Conversions as CV
@@ -23,12 +21,6 @@ class CarInterface(CarInterfaceBase):
     CarInterfaceBase.__init__(self, CP, CP_SP)
     # The controller runs the radar session; carstate reads its outcome on the next update.
     self.CS.radar_session = self.CC.radar_session
-
-  @staticmethod
-  def get_pid_accel_limits(CP, CP_SP, current_speed, cruise_speed):
-    ceiling = np.interp(current_speed, CarControllerParams.ACCEL_CEILING_BP, CarControllerParams.ACCEL_CEILING_V)
-    fraction = np.interp(cruise_speed - current_speed, CarControllerParams.ACCEL_GAP_BP, CarControllerParams.ACCEL_GAP_FRACTION)
-    return CarControllerParams.ACCEL_MIN, float(ceiling * fraction)
 
   @staticmethod
   def configure_torque_tune(candidate, tune, steering_angle_deadzone_deg=0.0):

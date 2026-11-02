@@ -8,12 +8,10 @@ The accel command on the wire, driven through the real CarController.update_long
 frame rates, the slew limits, the standstill hold and its relax, the release grammar and the
 RESUME_UNLATCHING pulse, the breakaway ramp, the gas override and the disengaged patterns.
 """
-import numpy as np
 import pytest
 
 from opendbc.car import DT_CTRL
 from opendbc.car.mazda import mazdacan
-from opendbc.car.mazda.interface import CarInterface
 from opendbc.car.mazda.longitudinal import (BREAKAWAY_FRAMES, LEAD_HIDE_FRAMES, LEAD_SHOW_FRAMES, RELEASE_DEBOUNCE_FRAMES,
                                             RELEASE_SHAPE_FRAMES, RESUME_REPULSE_FRAMES, RESUME_UNLATCH_LATCHED_FRAMES, LeadIcon)
 from opendbc.car.mazda.tests.conftest import (CRZ_CTRL, CRZ_INFO, RADAR_STATIC, RADAR_UDS, LongCtrlState, accel_cmd_raw,
@@ -245,21 +243,6 @@ def test_ceiling_follows_stock_by_speed(cc, cs):
   cc.accel_last = 0.5
   step_long(cc, cs, accel=0.5, cruise_engaged=True, v_ego=14.)
   assert cc.accel_last == pytest.approx(0.5, abs=1e-6)
-
-
-def test_accel_limit_follows_the_shortfall_to_the_set_speed():
-  """The PID limit is the speed ceiling scaled by the gap to the set speed: at highway speed a gap under
-  ~2 m/s stays under the 5>4 kickdown (~0.42 m/s2), a large gap or a launch gets the whole ceiling,
-  and braking is never limited."""
-  def limits(v_ego, gap):
-    return CarInterface.get_pid_accel_limits(None, None, v_ego, v_ego + gap)
-
-  assert limits(20., 1.) == (CarControllerParams.ACCEL_MIN, pytest.approx(0.37, abs=0.01))
-  assert limits(20., 2.5)[1] < 0.45  # stock p90 for 1.5 to 3 m/s
-  assert limits(20., -5.)[1] == pytest.approx(0.38 * limits(20., 30.)[1])  # over the set speed
-  for v_ego, ceiling in ((0., 1.5), (4., 1.75), (14., 0.95), (25., 0.65)):
-    assert limits(v_ego, 30.)[1] == pytest.approx(ceiling)
-  assert all(np.diff(CarControllerParams.ACCEL_GAP_FRACTION) > 0) and CarControllerParams.ACCEL_GAP_FRACTION[-1] == 1.
 
 
 def test_accel_last_tracks_the_wire_not_the_plan(cc, cs):
