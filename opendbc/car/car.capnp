@@ -296,6 +296,17 @@ struct CarState {
   autoTurnSignalReadyRequestId @88 :UInt64; # TX echoed and lamps confirmed for this automatic maneuver; zero otherwise
   tbtRearInputsAvailable @89 :Bool; # fresh CANFD OEM BSD input for the TBT physical-indicator trigger only (BSD-only since 2026-10-30)
   tbtRightRearBlocked @90 :Bool = true; # OEM right BSD warning or invalid/stale BSD; no corner-distance veto; manual admission unchanged
+  steeringTouch @91 :SteeringTouch;
+
+  struct SteeringTouch {
+    available @0 :Bool;
+    valid @1 :Bool;
+    touched @2 :Bool;
+    sampleMonoTime @3 :UInt64;
+    rawStatus @4 :UInt8;
+    rawTouch1 @5 :UInt8;
+    rawTouch2 @6 :UInt8;
+  }
 
   struct WheelSpeeds {
     # optional wheel speeds
