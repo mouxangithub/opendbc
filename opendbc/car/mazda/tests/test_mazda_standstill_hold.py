@@ -5,7 +5,7 @@ This file is part of zoompilot and is licensed under the MIT License.
 See the LICENSE.md file in the root directory for more details.
 
 The StandstillHold state machine on its own: the hold, the body-latched relax, the release
-debounce, the RESUME_UNLATCHING pulse and its one retry.
+debounce and its firm-plan shortcut, the RESUME_UNLATCHING pulse and its one retry.
 """
 import pytest
 
@@ -14,8 +14,9 @@ from opendbc.car.mazda.longitudinal import (RELEASE_ACCEL, RELEASE_DEBOUNCE_FRAM
                                             RELEASE_SETTLE_FRAMES, RESUME_REPULSE_FRAMES, RESUME_UNLATCH_LATCHED_FRAMES,
                                             StandstillHold)
 
-# A positive plan under the firm threshold, so the release runs the full debounce.
+# Positive plans under and over the firm threshold: the full debounce, and its shortcut.
 GENTLE = RELEASE_FIRM_ACCEL - 0.1
+FIRM = RELEASE_FIRM_ACCEL + 0.1
 
 
 def drive(sm, frames, **kwargs):
@@ -93,9 +94,9 @@ def test_firm_plan_skips_the_debounce(body_hold):
   # RELEASE_FIRM_FRAMES instead of the full debounce; standstill blips never got this high
   drive(sm, 1, stopping=True)
   drive(sm, 100, stopping=True, standstill=True, body_hold=body_hold)
-  drive(sm, RELEASE_FIRM_FRAMES - 1, standstill=True, body_hold=body_hold, plan_accel=RELEASE_FIRM_ACCEL + 0.01)
+  drive(sm, RELEASE_FIRM_FRAMES - 1, standstill=True, body_hold=body_hold, plan_accel=FIRM)
   assert sm.holding
-  drive(sm, 1, standstill=True, body_hold=body_hold, plan_accel=RELEASE_FIRM_ACCEL + 0.01)
+  drive(sm, 1, standstill=True, body_hold=body_hold, plan_accel=FIRM)
   assert not sm.holding and sm.just_released
   assert sm.resume_unlatching == body_hold
   # a firm request that eases to a gentle plan keeps the hold open
@@ -111,9 +112,9 @@ def test_firm_plan_waits_out_a_running_pulse():
   assert sm.holding and sm.resume_unlatching
   remaining = sm.unlatch_frames
   for _ in range(remaining - 1):
-    drive(sm, 1, standstill=True, body_hold=True, plan_accel=1.0)
+    drive(sm, 1, standstill=True, body_hold=True, plan_accel=FIRM)
     assert sm.holding, "a firm request reopened the hold inside a running pulse"
-  drive(sm, RELEASE_FIRM_FRAMES + 1, standstill=True, body_hold=True, plan_accel=1.0)
+  drive(sm, RELEASE_FIRM_FRAMES + 1, standstill=True, body_hold=True, plan_accel=FIRM)
   assert not sm.holding
 
 
@@ -130,7 +131,7 @@ def test_hold_comes_back_if_the_plan_changes_its_mind():
   sm = StandstillHold()
   drive(sm, 1, stopping=True)
   drive(sm, 100, stopping=True, standstill=True)
-  drive(sm, RELEASE_DEBOUNCE_FRAMES, standstill=True, plan_accel=0.5)
+  drive(sm, RELEASE_DEBOUNCE_FRAMES, standstill=True, plan_accel=GENTLE)
   assert not sm.holding
   # nothing was latched, so this release emits no unlatch bit at all, deferred or otherwise
   assert sm.unlatch_frames == 0 and not sm.resume_unlatching
@@ -193,9 +194,9 @@ def test_never_latched_release_emits_no_pulse():
   drive(sm, 1, stopping=True)
   drive(sm, 100, stopping=True, standstill=True)
   assert not sm.resume_unlatching
-  drive(sm, RELEASE_DEBOUNCE_FRAMES, standstill=True, plan_accel=0.5)
+  drive(sm, RELEASE_DEBOUNCE_FRAMES, standstill=True, plan_accel=GENTLE)
   assert not sm.holding and not sm.latched_release
-  drive(sm, int(1.0 / DT_CTRL), standstill=True, plan_accel=0.5)
+  drive(sm, int(1.0 / DT_CTRL), standstill=True, plan_accel=GENTLE)
   assert not sm.resume_unlatching and sm.unlatch_frames == 0
 
 
@@ -209,7 +210,7 @@ def test_latched_release_pulses_immediately_and_runs_its_length():
   assert not sm.resume_unlatching
   drive(sm, 1, standstill=True, body_hold=True, plan_accel=GENTLE)
   assert sm.resume_unlatching, "the pulse must fire with the release"
-  drive(sm, RESUME_UNLATCH_LATCHED_FRAMES, standstill=True, body_hold=True, plan_accel=0.5)
+  drive(sm, RESUME_UNLATCH_LATCHED_FRAMES, standstill=True, body_hold=True, plan_accel=GENTLE)
   assert not sm.resume_unlatching, "pulse outran its length"
 
 
