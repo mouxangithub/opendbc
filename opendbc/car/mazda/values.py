@@ -70,7 +70,7 @@ class CarControllerParams:
   # Permit a bounded breakaway ramp because Mazda longitudinal control has no integrator.
   ACCEL_BREAKAWAY_MAX = 1.45  # m/s2, ceiling for the still-stopped release ramp
   ACCEL_BREAKAWAY_OVERSHOOT = 0.75  # m/s2 above the plan the still-stopped ramp may climb
-  ACCEL_BREAKAWAY_RAMP = 5.0  # m/s3, the still-stopped climb once past stock's release frames
+  ACCEL_BREAKAWAY_RAMP = 2.5  # m/s3, the still-stopped climb once past stock's release frames
 
   # Positive command ceiling and build rate by speed. In town the plan already limits jerk, so the
   # build matches the 3-4 m/s3 other ports send and the ceiling only binds from 11 m/s. At highway
