@@ -483,8 +483,8 @@ class CarState(CarStateBase, MadsCarState, CarStateExt):
         ("ADC_0x32D", 20), ("ADC_0x32E", 20), ("ADC_0x1E2", 20), ("ADC_0x316", 20),
       ]
       return {
-        Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], pt_messages, CanBus.ESC),
-        Bus.cam: CANParser(DBC[CP.carFingerprint][Bus.pt], cam_messages, CanBus.MPC),
+        Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], pt_messages, CanBus(CP).ESC),
+        Bus.cam: CANParser(DBC[CP.carFingerprint][Bus.pt], cam_messages, CanBus(CP).MPC),
       }
 
     if CP.carFingerprint in PLATFORM_ATTO3_GENERAL:
@@ -505,8 +505,8 @@ class CarState(CarStateBase, MadsCarState, CarStateExt):
         ("STEERING_MODULE_ADAS", 50),
       ]
       return {
-        Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], pt_messages, CanBus.ESC),
-        Bus.cam: CANParser(DBC[CP.carFingerprint].get(Bus.cam, DBC[CP.carFingerprint][Bus.pt]), cam_messages, CanBus.MPC),
+        Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], pt_messages, CanBus(CP).ESC),
+        Bus.cam: CANParser(DBC[CP.carFingerprint].get(Bus.cam, DBC[CP.carFingerprint][Bus.pt]), cam_messages, CanBus(CP).MPC),
       }
 
     params = BydParams()
@@ -537,6 +537,6 @@ class CarState(CarStateBase, MadsCarState, CarStateExt):
       cam_messages.append(("CID_NCBHOL", 60))
 
     return {
-      Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], pt_messages, CanBus.ESC),
-      Bus.cam: CANParser(DBC[CP.carFingerprint][Bus.pt], cam_messages, CanBus.MPC),
+      Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], pt_messages, CanBus(CP).ESC),
+      Bus.cam: CANParser(DBC[CP.carFingerprint][Bus.pt], cam_messages, CanBus(CP).MPC),
     }

@@ -16,7 +16,7 @@ NUM_SLOTS = 20
 LAST_RADAR_MSG = RADAR_HEADER_MSG + NUM_SLOTS
 
 
-def create_radar_can_parser(car_fingerprint):
+def create_radar_can_parser(CP):
   # C1A-ARS3-A by Continental
   radar_targets = list(range(SLOT_1_MSG, SLOT_1_MSG + NUM_SLOTS))
   signals = list(zip(['FLRRNumValidTargets',
@@ -30,14 +30,14 @@ def create_radar_can_parser(car_fingerprint):
 
   messages = list({(s[1], 14) for s in signals})
 
-  return CANParser(DBC[car_fingerprint][Bus.radar], messages, CanBus.OBSTACLE)
+  return CANParser(DBC[CP.carFingerprint][Bus.radar], messages, CanBus(CP).OBSTACLE)
 
 
 class RadarInterface(RadarInterfaceBase):
   def __init__(self, CP, CP_SP):
     super().__init__(CP, CP_SP)
 
-    self.rcp = None if CP.radarUnavailable else create_radar_can_parser(CP.carFingerprint)
+    self.rcp = None if CP.radarUnavailable else create_radar_can_parser(CP)
 
     self.trigger_msg = LAST_RADAR_MSG
     self.updated_messages = set()

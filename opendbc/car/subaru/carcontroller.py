@@ -18,6 +18,7 @@ class CarController(CarControllerBase, SnGCarController):
   def __init__(self, dbc_names, CP, CP_SP):
     CarControllerBase.__init__(self, dbc_names, CP, CP_SP)
     SnGCarController.__init__(self, CP, CP_SP)
+    self.can_bus = CanBus(CP)
     self.apply_torque_last = 0
 
     self.cruise_button_prev = 0
@@ -46,7 +47,7 @@ class CarController(CarControllerBase, SnGCarController):
         apply_torque = 0
 
       if self.CP.flags & SubaruFlags.PREGLOBAL:
-        can_sends.append(subarucan.create_preglobal_steering_control(self.packer, self.frame // self.p.STEER_STEP, apply_torque, CC.latActive))
+        can_sends.append(subarucan.create_preglobal_steering_control(self.packer, self.can_bus, self.frame // self.p.STEER_STEP, apply_torque, CC.latActive))
       else:
         apply_steer_req = CC.latActive
 
@@ -56,7 +57,7 @@ class CarController(CarControllerBase, SnGCarController):
             common_fault_avoidance(abs(CS.out.steeringRateDeg) > MAX_STEER_RATE, apply_steer_req,
                                    self.steer_rate_counter, MAX_STEER_RATE_FRAMES)
 
-        can_sends.append(subarucan.create_steering_control(self.packer, apply_torque, apply_steer_req))
+        can_sends.append(subarucan.create_steering_control(self.packer, self.can_bus, apply_torque, apply_steer_req))
 
       self.apply_torque_last = apply_torque
 
@@ -94,34 +95,34 @@ class CarController(CarControllerBase, SnGCarController):
           cruise_button = 0
         self.cruise_button_prev = cruise_button
 
-        can_sends.append(subarucan.create_preglobal_es_distance(self.packer, cruise_button, CS.es_distance_msg))
+        can_sends.append(subarucan.create_preglobal_es_distance(self.packer, self.can_bus, cruise_button, CS.es_distance_msg))
 
     else:
       if self.frame % 10 == 0:
-        can_sends.append(subarucan.create_es_dashstatus(self.packer, self.frame // 10, CS.es_dashstatus_msg, CC.enabled,
+        can_sends.append(subarucan.create_es_dashstatus(self.packer, self.can_bus, self.frame // 10, CS.es_dashstatus_msg, CC.enabled,
                                                         self.CP.openpilotLongitudinalControl, CC.longActive, hud_control.leadVisible))
 
-        can_sends.append(subarucan.create_es_lkas_state(self.packer, self.frame // 10, CS.es_lkas_state_msg, CC.enabled, hud_control.visualAlert,
+        can_sends.append(subarucan.create_es_lkas_state(self.packer, self.can_bus, self.frame // 10, CS.es_lkas_state_msg, CC.enabled, hud_control.visualAlert,
                                                         hud_control.leftLaneVisible, hud_control.rightLaneVisible,
                                                         hud_control.leftLaneDepart, hud_control.rightLaneDepart))
 
         if self.CP.flags & SubaruFlags.SEND_INFOTAINMENT:
-          can_sends.append(subarucan.create_es_infotainment(self.packer, self.frame // 10, CS.es_infotainment_msg, hud_control.visualAlert))
+          can_sends.append(subarucan.create_es_infotainment(self.packer, self.can_bus, self.frame // 10, CS.es_infotainment_msg, hud_control.visualAlert))
 
       if self.CP.openpilotLongitudinalControl:
         if self.frame % 5 == 0:
-          can_sends.append(subarucan.create_es_status(self.packer, self.frame // 5, CS.es_status_msg,
+          can_sends.append(subarucan.create_es_status(self.packer, self.can_bus, self.frame // 5, CS.es_status_msg,
                                                       self.CP.openpilotLongitudinalControl, CC.longActive, cruise_rpm))
 
-          can_sends.append(subarucan.create_es_brake(self.packer, self.frame // 5, CS.es_brake_msg,
+          can_sends.append(subarucan.create_es_brake(self.packer, self.can_bus, self.frame // 5, CS.es_brake_msg,
                                                      self.CP.openpilotLongitudinalControl, CC.longActive, cruise_brake))
 
-          can_sends.append(subarucan.create_es_distance(self.packer, self.frame // 5, CS.es_distance_msg, 0, pcm_cancel_cmd,
+          can_sends.append(subarucan.create_es_distance(self.packer, self.frame // 5, CS.es_distance_msg, self.can_bus.main, pcm_cancel_cmd,
                                                         self.CP.openpilotLongitudinalControl, cruise_brake > 0, cruise_throttle))
       else:
         if pcm_cancel_cmd:
           if not (self.CP.flags & SubaruFlags.HYBRID):
-            bus = CanBus.alt if self.CP.flags & SubaruFlags.GLOBAL_GEN2 else CanBus.main
+            bus = self.can_bus.alt if self.CP.flags & SubaruFlags.GLOBAL_GEN2 else self.can_bus.main
             can_sends.append(subarucan.create_es_distance(self.packer, CS.es_distance_msg["COUNTER"] + 1, CS.es_distance_msg, bus, pcm_cancel_cmd))
 
       if self.CP.flags & SubaruFlags.DISABLE_EYESIGHT:
@@ -131,13 +132,13 @@ class CarController(CarControllerBase, SnGCarController):
 
         # Create all of the other eyesight messages to keep the rest of the car happy when eyesight is disabled
         if self.frame % 5 == 0:
-          can_sends.append(subarucan.create_es_highbeamassist(self.packer))
+          can_sends.append(subarucan.create_es_highbeamassist(self.packer, self.can_bus))
 
         if self.frame % 10 == 0:
-          can_sends.append(subarucan.create_es_static_1(self.packer))
+          can_sends.append(subarucan.create_es_static_1(self.packer, self.can_bus))
 
         if self.frame % 2 == 0:
-          can_sends.append(subarucan.create_es_static_2(self.packer))
+          can_sends.append(subarucan.create_es_static_2(self.packer, self.can_bus))
 
     can_sends.extend(SnGCarController.create_stop_and_go(self, self.packer, CC, CS, self.frame))
 

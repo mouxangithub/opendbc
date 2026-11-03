@@ -1,7 +1,7 @@
 import os
 import time
 
-from opendbc.car import gen_empty_fingerprint
+from opendbc.car import gen_empty_fingerprint, get_safety_config
 from opendbc.car.can_definitions import CanRecvCallable, CanSendCallable
 from opendbc.car.carlog import carlog
 from opendbc.car.structs import CarParams, CarParamsT
@@ -168,6 +168,16 @@ def get_car(can_recv: CanRecvCallable, can_send: CanSendCallable, set_obd_multip
   CP.fingerprintSource = source
   CP.fuzzyFingerprint = not exact_match
   CP_SP = CarInterface.get_params_sp(CP, candidate, fingerprints, car_fw, alpha_long_allowed, is_release_sp, docs=False)
+
+  # multi-panda (dual-panda CAN mode): pandad publishes one pandaStates entry per
+  # connected CAN panda and applies safetyConfigs[i] to panda i. Duplicate the
+  # primary safety config for the secondary panda so CanBusBase.offset (= 4 per
+  # extra panda) activates and both pandas run the same safety model. Brands not
+  # deriving their CanBus from CanBusBase keep addressing buses 0-2 (i.e. the
+  # primary panda only) and simply ignore the secondary one.
+  if num_pandas > 1 and len(CP.safetyConfigs) == 1:
+    sc = CP.safetyConfigs[0]
+    CP.safetyConfigs = [sc, get_safety_config(sc.safetyModel, sc.safetyParam)]
 
   sunnypilot_interfaces(CarInterface, CP, CP_SP, init_params_list_sp, can_recv, can_send)
 

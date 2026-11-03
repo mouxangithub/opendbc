@@ -8,7 +8,7 @@ from opendbc.car.lateral import AngleSteeringLimits, apply_driver_steer_torque_l
 from opendbc.car.byd import bydcan
 from opendbc.car.byd.byd_params import BydParams
 from opendbc.car.byd.values import (
-  BydFlags, CarControllerParams, PLATFORM_ATTO3_GENERAL, PLATFORM_N3,
+  BydFlags, CanBus, CarControllerParams, PLATFORM_ATTO3_GENERAL, PLATFORM_N3,
   PLATFORM_QIN_SEAL06, PLATFORM_SONG_PLUS_DMI, TORQUE_LAT_CAR,
 )
 
@@ -72,6 +72,7 @@ class CarController(CarControllerBase):
     self.packer_obj = CANPacker("gm_global_a_object")
     self.params = CarControllerParams(CP)
     self.CP = CP
+    self.can_bus = CanBus(CP)
     self.param_s = BydParams()
     self.is_atto3_general = CP.carFingerprint in PLATFORM_ATTO3_GENERAL
     self.is_n3 = CP.carFingerprint in PLATFORM_N3
@@ -375,9 +376,9 @@ class CarController(CarControllerBase):
 
       if CC.latActive:
         template = CS.atto3_steer_template or bydcan.ATTO3_STEER_TEMPLATE_DEFAULT
-        can_sends.append(bydcan.atto3_create_steering_control(self.packer, apply_angle, template,
+        can_sends.append(bydcan.atto3_create_steering_control(self.packer, self.can_bus, apply_angle, template,
                                                               self.frame // 2))
-        can_sends.append(bydcan.atto3_create_lkas_hud(self.packer, CS.atto3_lkas_hud,
+        can_sends.append(bydcan.atto3_create_lkas_hud(self.packer, self.can_bus, CS.atto3_lkas_hud,
                                                       self.frame // 2))
 
     if self.CP.openpilotLongitudinalControl:
@@ -385,10 +386,10 @@ class CarController(CarControllerBase):
         accel = float(np.clip(actuators.accel, -3.5, 2.0))
         if not CC.longActive or pcm_cancel_cmd:
           accel = 0.0
-        can_sends.append(bydcan.atto3_create_acc_control(self.packer, accel,
+        can_sends.append(bydcan.atto3_create_acc_control(self.packer, self.can_bus, accel,
                                                          CC.longActive and not pcm_cancel_cmd, self.atto3_acc_idx))
         set_speed = hud_control.setSpeed if hud_control.setSpeed > 0 else CS.out.cruiseState.speed
-        can_sends.append(bydcan.atto3_create_acc_hud(self.packer, CC.enabled, set_speed * 3.6,
+        can_sends.append(bydcan.atto3_create_acc_hud(self.packer, self.can_bus, CC.enabled, set_speed * 3.6,
                                                      hud_control.leadVisible, self.atto3_acc_idx))
         self.atto3_acc_idx += 1
 
@@ -472,14 +473,14 @@ class CarController(CarControllerBase):
         updown_cmd = self._get_auto_gas_sync_button(CS)
 
       can_sends.append(bydcan.create_mpc_pcm_button(
-        self.packer, CS.esc_pcm, CS.lowCruiseActive and CS.out.cruiseState.enabled,
+        self.packer, CS.esc_pcm, self.can_bus, CS.lowCruiseActive and CS.out.cruiseState.enabled,
         self.mpc_pcm_counter, updown_cmd,
       ))
       self.mpc_pcm_counter = (self.mpc_pcm_counter + 1) % 16
 
     if self.frame % 2 == 0:
       can_sends.append(bydcan.create_adas_hud(
-        self.packer, CS.cam_adas, CS.lowCruiseSetSpeedDisplay or 0, bool(CS.lowCruiseActive),
+        self.packer, CS.cam_adas, self.can_bus, CS.lowCruiseSetSpeedDisplay or 0, bool(CS.lowCruiseActive),
         CS.acc_hud_adas_counter,
       ))
 

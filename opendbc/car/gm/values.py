@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from enum import Enum, IntFlag
 
-from opendbc.car import Bus, PlatformConfig, DbcDict, Platforms, CarSpecs
+from opendbc.car import Bus, CanBusBase, PlatformConfig, DbcDict, Platforms, CarSpecs
 from opendbc.car.structs import CarParams
 from opendbc.car.docs_definitions import CarDocs, CarFootnote, CarHarness, CarParts, Column, SupportType
 from opendbc.car.fw_query_definitions import FwQueryConfig, Request, StdQueries
@@ -278,11 +278,32 @@ class AccState:
   STANDSTILL = 4
 
 
-class CanBus:
-  POWERTRAIN = 0
-  OBSTACLE = 1
-  CAMERA = 2
-  CHASSIS = 2
+class CanBus(CanBusBase):
+  """Dual-panda convention: POWERTRAIN/OBSTACLE sit on the secondary panda's bus
+  block (OBD/powertrain segment, buses 4-6 in dual mode); CAMERA/CHASSIS are only
+  reachable through the primary (active) panda and never shift."""
+
+  def __init__(self, CP=None, fingerprint=None) -> None:
+    super().__init__(CP, fingerprint)
+
+  @property
+  def POWERTRAIN(self) -> int:
+    return self.offset
+
+  @property
+  def OBSTACLE(self) -> int:
+    return self.offset + 1
+
+  @property
+  def CAMERA(self) -> int:
+    return 2
+
+  # the chassis bus is the camera bus on GM (relayed by the camera ECU)
+  @property
+  def CHASSIS(self) -> int:
+    return self.CAMERA
+
+  # src markers, not real buses
   LOOPBACK = 128
   DROPPED = 192
 

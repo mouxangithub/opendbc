@@ -128,7 +128,7 @@ class TestBydCan(unittest.TestCase):
     msg = create_steering_control(self.packer, self.CP, cam_lkas, 100, 1, 1, self.hud, False, 0)
     assert msg[0] == 0x316  # ACC_MPC_STATE address
     assert len(msg[1]) == 8
-    assert msg[2] == CanBus.ESC
+    assert msg[2] == CanBus(self.CP).ESC
 
   def test_acc_cmd(self):
     cam_acc = self._make_cam_acc()
@@ -136,14 +136,14 @@ class TestBydCan(unittest.TestCase):
     msg = acc_cmd(self.packer, self.CP, cam_acc, jerk, 1.0, 0, 0, True, 3, 0)
     assert msg[0] == 0x32E  # ACC_CMD address
     assert len(msg[1]) == 8
-    assert msg[2] == CanBus.ESC
+    assert msg[2] == CanBus(self.CP).ESC
 
   def test_create_fake_318(self):
     esc_eps = self._make_esc_eps()
     msg = create_fake_318(self.packer, self.CP, esc_eps, 100, True, True, 0, True, 0)
     assert msg[0] == 0x318  # ACC_EPS_STATE address
     assert len(msg[1]) == 8
-    assert msg[2] == CanBus.MPC
+    assert msg[2] == CanBus(self.CP).MPC
 
 
 class TestBydChecksum(unittest.TestCase):
@@ -180,16 +180,16 @@ class TestBydCarState(unittest.TestCase):
     parsers = CarState.get_can_parsers(CP, None)
     assert Bus.pt in parsers
     assert Bus.cam in parsers
-    assert parsers[Bus.pt].bus == CanBus.ESC
-    assert parsers[Bus.cam].bus == CanBus.MPC
+    assert parsers[Bus.pt].bus == CanBus(self.CP).ESC
+    assert parsers[Bus.cam].bus == CanBus(self.CP).MPC
 
   def test_get_can_parsers_atto3(self):
     CP = CarInterface.get_params(CAR.BYD_ATTO3, gen_empty_fingerprint(), [], False, False, False)
     parsers = CarState.get_can_parsers(CP, None)
     assert Bus.pt in parsers
     assert Bus.cam in parsers
-    assert parsers[Bus.pt].bus == CanBus.ESC
-    assert parsers[Bus.cam].bus == CanBus.MPC
+    assert parsers[Bus.pt].bus == CanBus(self.CP).ESC
+    assert parsers[Bus.cam].bus == CanBus(self.CP).MPC
 
 
 if __name__ == "__main__":

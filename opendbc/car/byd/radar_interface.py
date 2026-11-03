@@ -28,10 +28,10 @@ def get_n3_radar_can_parser(CP, radar_tracks):
     return None
   # cluster blocks run at 20ms in the matrix; header at 100ms
   checks = [(name, 20) for name in N3_RADAR_MSGS] + [(N3_RADAR_HEADER, 100)]
-  return CANParser("byd_n3_pt", checks, CanBus.MRR)
+  return CANParser("byd_n3_pt", checks, CanBus(CP).MRR)
 
 
-def create_gm_radar_can_parser():
+def create_gm_radar_can_parser(CP):
   msg_ids = list(range(SLOT_1_MSG, SLOT_1_MSG + NUM_SLOTS))
   signals = list(zip(
     ["FLRRNumValidTargets", "FLRRSnsrBlckd", "FLRRYawRtPlsblityFlt", "FLRRHWFltPrsntInt",
@@ -42,20 +42,20 @@ def create_gm_radar_can_parser():
     strict=True,
   ))
   checks = list({(msg, 6) for _, msg in signals})
-  return CANParser("gm_global_a_object", checks, CanBus.MRR)
+  return CANParser("gm_global_a_object", checks, CanBus(CP).MRR)
 
 
 def get_radar_can_parser(CP, radar_tracks, msg_start_addr, msg_count):
   if not radar_tracks:
     return None
   checks = [(f"RADAR_TRACK_{addr:x}", 25) for addr in range(msg_start_addr, msg_start_addr + msg_count)]
-  return CANParser("byd_tangdm_radar", checks, CanBus.MRR)
+  return CANParser("byd_tangdm_radar", checks, CanBus(CP).MRR)
 
 
 def get_pt_radar_can_parser(CP, radar_tracks, freq):
   if not radar_tracks:
     return None
-  return CANParser("byd_generic_pt", [("CID_NCBHOL", freq)], CanBus.MPC)
+  return CANParser("byd_generic_pt", [("CID_NCBHOL", freq)], CanBus(CP).MPC)
 
 
 class RadarInterface(RadarInterfaceBase):
@@ -74,7 +74,7 @@ class RadarInterface(RadarInterfaceBase):
       print("RadarInterface: Use N3 MRR cluster list...")
     elif self.use_ext_radar:
       self.updated_tracks = set()
-      self.rcp = create_gm_radar_can_parser()
+      self.rcp = create_gm_radar_can_parser(self.CP)
       self.trigger_msg = LAST_RADAR_MSG
       print("RadarInterface: Use pt radar...")
     elif self.CP.carFingerprint in PT_RADAR_CAR:

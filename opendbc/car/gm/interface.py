@@ -103,7 +103,7 @@ class CarInterface(CarInterfaceBase, CarInterfaceExt):
     ret.brand = "gm"
     ret.safetyConfigs = [get_safety_config(structs.CarParams.SafetyModel.gm)]
     ret.autoResumeSng = False
-    if 0x142 in fingerprint[CanBus.POWERTRAIN]:
+    if 0x142 in fingerprint[CanBus(fingerprint=fingerprint).POWERTRAIN]:
       ret.flags |= GMFlags.HAS_BSM.value
 
     if candidate in EV_CAR:
@@ -140,7 +140,8 @@ class CarInterface(CarInterfaceBase, CarInterfaceExt):
       ret.openpilotLongitudinalControl = True
       ret.networkLocation = NetworkLocation.gateway
       # LRR messages can take up to a few seconds to start sending after ignition, check camera data as well which starts earlier
-      ret.radarUnavailable = RADAR_HEADER_MSG not in fingerprint[CanBus.OBSTACLE] and CAMERA_DATA_HEADER_MSG not in fingerprint[CanBus.OBSTACLE] and not docs
+      can = CanBus(fingerprint=fingerprint)
+      ret.radarUnavailable = RADAR_HEADER_MSG not in fingerprint[can.OBSTACLE] and CAMERA_DATA_HEADER_MSG not in fingerprint[can.OBSTACLE] and not docs
       ret.pcmCruise = False  # stock non-adaptive cruise control is kept off
       # supports stop and go, but initial engage must (conservatively) be above 18mph
       ret.minEnableSpeed = 18 * CV.MPH_TO_MS

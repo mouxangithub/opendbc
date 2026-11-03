@@ -16,6 +16,10 @@ PEDAL_TRANSITION = 10. * CV.MPH_TO_MS
 
 
 class CanBus(CanBusBase):
+  """Dual-panda convention: pt/alt sit on the secondary panda's bus block
+  (OBD/powertrain segment, buses 4-6 in dual mode); the camera ECU is only
+  reachable through the primary (active) panda and never shifts."""
+
   def __init__(self, CP=None, fingerprint=None) -> None:
     super().__init__(CP, fingerprint)
 
@@ -29,7 +33,7 @@ class CanBus(CanBusBase):
 
   @property
   def cam(self) -> int:
-    return self.offset + 2
+    return 2
 
 
 class CarControllerParams:

@@ -10,7 +10,7 @@ Merged implementation:
 from dataclasses import dataclass, field
 from enum import IntFlag
 
-from opendbc.car import Bus, CarSpecs, DbcDict, PlatformConfig, Platforms
+from opendbc.car import Bus, CanBusBase, CarSpecs, DbcDict, PlatformConfig, Platforms
 from opendbc.car.docs_definitions import CarDocs, CarHarness, CarParts
 from opendbc.car.fw_query_definitions import FwQueryConfig, Request
 from opendbc.car.lateral import AngleSteeringLimits
@@ -105,10 +105,35 @@ class LKASConfig:
   ALARM_AND_LKA = 3
 
 
-class CanBus:
-  ESC = 0
-  MRR = 1
-  MPC = 2
+class CanBus(CanBusBase):
+  """Bus addressing for BYD.
+
+  Dual-panda CAN mode convention (safetyConfigs carries one entry per panda):
+  - primary panda (active, runs safety + control): camera/control segment, buses 0-2
+  - secondary panda (aux, e.g. internal dos): OBD/powertrain segment, buses 4-6
+    (CanBusBase.offset = 4 per extra panda; equals buses 0-2 with a single panda)
+  """
+
+  def __init__(self, CP=None, fingerprint=None) -> None:
+    super().__init__(CP, fingerprint)
+
+  # ESC / MRR are on the powertrain side: they move to the secondary panda's
+  # bus block in dual-panda mode
+  @property
+  def ESC(self) -> int:
+    return self.offset
+
+  @property
+  def MRR(self) -> int:
+    return self.offset + 1
+
+  # the ADAS camera is only reachable through the primary (active) panda,
+  # so this bus never shifts
+  @property
+  def MPC(self) -> int:
+    return 2
+
+  # src markers, not real buses
   LOOPBACK = 128
   DROPPED = 192
 

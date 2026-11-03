@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from enum import Enum, IntFlag
 
-from opendbc.car import Bus, CarSpecs, DbcDict, PlatformConfig, Platforms, uds
+from opendbc.car import CanBusBase, Bus, CarSpecs, DbcDict, PlatformConfig, Platforms, uds
 from opendbc.car.structs import CarParams
 from opendbc.car.docs_definitions import CarFootnote, CarHarness, CarDocs, CarParts, Column
 from opendbc.car.fw_query_definitions import FwQueryConfig, Request, StdQueries, p16
@@ -79,9 +79,22 @@ GLOBAL_ES_ADDR = 0x787
 GEN2_ES_BUTTONS_DID = b'\x11\x30'
 
 
-class CanBus:
-  main = 0
-  alt = 1
+class CanBus(CanBusBase):
+  """Dual-panda convention: main/alt are car-side buses (OBD/powertrain segment,
+  buses 4-6 in dual mode); the camera ECU is only reachable through the primary
+  (active) panda and never shifts."""
+
+  def __init__(self, CP=None, fingerprint=None) -> None:
+    super().__init__(CP, fingerprint)
+
+  @property
+  def main(self) -> int:
+    return self.offset
+
+  @property
+  def alt(self) -> int:
+    return self.offset + 1
+
   camera = 2
 
 

@@ -72,7 +72,7 @@ class CarInterface(CarInterfaceBase):
       radar_car = candidate in (PT_RADAR_CAR | RADAR_CAR)
       ret.radarUnavailable = not radar_car
 
-    ret.deprecated.enableBsm = 0x418 in fingerprint[CanBus.ESC]
+    ret.deprecated.enableBsm = 0x418 in fingerprint[CanBus(fingerprint=fingerprint).ESC]
     ret.transmissionType = TransmissionType.direct
 
     if candidate in PLATFORM_N3:

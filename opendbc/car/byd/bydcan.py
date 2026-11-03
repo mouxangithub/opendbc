@@ -55,7 +55,7 @@ def create_steering_control(packer, CP, cam_msg: dict, req_torque, req_prepare, 
   else:
     values.update({"sig_kqgoqc": 0, "sig_ausukb": 0})
 
-  return _make_msg_with_checksum(packer, "CID_HGZKCQ", CanBus.ESC, values)
+  return _make_msg_with_checksum(packer, "CID_HGZKCQ", CanBus(CP).ESC, values)
 
 
 def create_steering_control_angle_mode(packer, CP, cam_msg: dict, active, req_prepare,
@@ -80,7 +80,7 @@ def create_steering_control_angle_mode(packer, CP, cam_msg: dict, active, req_pr
   if active:
     values["sig_hfhxif"] = 0
 
-  return _make_msg_with_checksum(packer, "CID_HGZKCQ", CanBus.ESC, values)
+  return _make_msg_with_checksum(packer, "CID_HGZKCQ", CanBus(CP).ESC, values)
 
 
 def create_angle_control(packer, CP, cam_msg: dict, req_angle, max_torque, active, req_prepare, counter):
@@ -99,7 +99,7 @@ def create_angle_control(packer, CP, cam_msg: dict, req_angle, max_torque, activ
     })
   else:
     values.update({"sig_kqgoqc": 0, "sig_ausukb": 0, "sig_hfhxif": int(req_prepare)})
-  return _make_msg_with_checksum(packer, "CID_TCDUBH", CanBus.ESC, values)
+  return _make_msg_with_checksum(packer, "CID_TCDUBH", CanBus(CP).ESC, values)
 
 
 def acc_cmd_modified_stock_long(packer, CP, cam_msg: dict, adas_set_dist, mrr_leaddist, modlongActive, counter):
@@ -132,7 +132,7 @@ def acc_cmd_modified_stock_long(packer, CP, cam_msg: dict, adas_set_dist, mrr_le
       else:
         scale = np.interp(mrr_leaddist, Tuning.K_ACCEL_BP, Tuning.K_ACCEL_NEG_4BAR)
     values.update({"sig_zspfbe": accel * scale, "sig_vfmqcq": jerk_u, "sig_vuisck": jerk_l})
-  return _make_msg_with_checksum(packer, "CID_RJDCMR", CanBus.ESC, values)
+  return _make_msg_with_checksum(packer, "CID_RJDCMR", CanBus(CP).ESC, values)
 
 
 def acc_cmd(packer, CP, cam_msg: dict, byd_jerk, accel, rfss, sss, longActive, accmode, counter):
@@ -158,7 +158,7 @@ def acc_cmd(packer, CP, cam_msg: dict, byd_jerk, accel, rfss, sss, longActive, a
       values.update({"sig_doptnp": sss})
     if accmode < 8:
       values.update({"sig_gbaqki": accmode})
-  return _make_msg_with_checksum(packer, "CID_RJDCMR", CanBus.ESC, values)
+  return _make_msg_with_checksum(packer, "CID_RJDCMR", CanBus(CP).ESC, values)
 
 
 def create_fake_318(packer, CP, esc_msg: dict, faketorque, laks_reqprepare, laks_active,
@@ -176,7 +176,7 @@ def create_fake_318(packer, CP, esc_msg: dict, faketorque, laks_reqprepare, laks
       values.update({"sig_rcgbok": 1, "sig_itfrci": 0, "sig_bhnetn": fake_driver_torque})
     else:
       values.update({"sig_rcgbok": 0, "sig_itfrci": 0})
-  return _make_msg_with_checksum(packer, "CID_IQMESB", CanBus.MPC, values)
+  return _make_msg_with_checksum(packer, "CID_IQMESB", CanBus(CP).MPC, values)
 
 
 def create_fake_1FC(packer, CP, esc_msg: dict, faketorque, laks_reqprepare, laks_active, enabled, counter):
@@ -198,10 +198,10 @@ def create_fake_1FC(packer, CP, esc_msg: dict, faketorque, laks_reqprepare, laks
       values.update({"sig_rcgbok": 1, "sig_itfrci": 0})
     else:
       values.update({"sig_rcgbok": 0, "sig_itfrci": 0})
-  return _make_msg_with_checksum(packer, "CID_KERMHK", CanBus.MPC, values)
+  return _make_msg_with_checksum(packer, "CID_KERMHK", CanBus(CP).MPC, values)
 
 
-def create_adas_hud(packer, cam_msg: dict, setSpeed, useCustomSpeed, counter):
+def create_adas_hud(packer, cam_msg: dict, can_bus, setSpeed, useCustomSpeed, counter):
   values = _copy_values(cam_msg, (
     "sig_gqnxpm", "sig_ldwxym", "sig_ijrdxw", "sig_ifqqtp", "sig_rqvixu", "sig_znmccg",
     "sig_civxub", "sig_hprcqm", "sig_ueqstp", "sig_ynhjzo", "sig_pahrba", "sig_tvpmqh",
@@ -210,10 +210,10 @@ def create_adas_hud(packer, cam_msg: dict, setSpeed, useCustomSpeed, counter):
   values["sig_fghgbq"] = counter
   if useCustomSpeed:
     values.update({"sig_gqnxpm": setSpeed})
-  return _make_msg_with_checksum(packer, "CID_XQYNBW", CanBus.ESC, values)
+  return _make_msg_with_checksum(packer, "CID_XQYNBW", can_bus.ESC, values)
 
 
-def create_mpc_pcm_button(packer, pt_msg: dict, freeze_updown_input, counter, updown_cmd):
+def create_mpc_pcm_button(packer, pt_msg: dict, can_bus, freeze_updown_input, counter, updown_cmd):
   values = _copy_values(pt_msg, (
     "sig_tekixn", "sig_dzciox", "sig_ymtlod", "sig_lftkfn", "sig_ssvpvb", "sig_fehruy",
     "sig_xmstyv", "sig_uikswg", "sig_ebundx", "sig_tpueds", "sig_dzuevb", "sig_aleizt",
@@ -225,7 +225,7 @@ def create_mpc_pcm_button(packer, pt_msg: dict, freeze_updown_input, counter, up
     values.update({"sig_ymtlod": 0})
   elif updown_cmd:
     values.update({"sig_ymtlod": updown_cmd})
-  return _make_msg_with_checksum(packer, "CID_YHMGPU", CanBus.MPC, values)
+  return _make_msg_with_checksum(packer, "CID_YHMGPU", can_bus.MPC, values)
 
 
 # --- N3 platform (byd_n3_pt.dbc, CAN FD SA6/N3A1) ---
@@ -257,7 +257,7 @@ def n3_angle_control(packer, CP, req_angle, max_torque_nm, active, req_prepare, 
     "Counter_1E2_S": counter,
     "Checksum_1E2_S": 0,
   }
-  return _make_msg_with_checksum(packer, "ADC_0x1E2", CanBus.ESC, values, checksum_sig="Checksum_1E2_S")
+  return _make_msg_with_checksum(packer, "ADC_0x1E2", CanBus(CP).ESC, values, checksum_sig="Checksum_1E2_S")
 
 
 def n3_acc_cmd(packer, CP, accel, byd_jerk, rfss, sss, long_active, accmode, counter, pcm_cancel):
@@ -283,7 +283,7 @@ def n3_acc_cmd(packer, CP, accel, byd_jerk, rfss, sss, long_active, accmode, cou
   if not long_active and not pcm_cancel:
     # passive copy of the camera's aim so the stock ACC decays smoothly
     values["ACC_Axv_Cv_Aim_S_32E"] = 0.0
-  return _make_msg_with_checksum(packer, "ADC_0x32E", CanBus.ESC, values, checksum_sig="Checksum_32E_S")
+  return _make_msg_with_checksum(packer, "ADC_0x32E", CanBus(CP).ESC, values, checksum_sig="Checksum_32E_S")
 
 
 # --- ATTO3 (byd_general.dbc, kept from the local validated port) ---
@@ -297,7 +297,7 @@ ATTO3_LKAS_HUD_PASSTHROUGH = ("LSS_STATE", "SETTINGS", "SET_ME_XFF", "SET_ME_X5F
                               "TSR", "HMA", "HAND_ON_WHEEL_WARNING", "PT2", "PT3", "PT4", "PT5")
 
 
-def atto3_create_steering_control(packer, apply_angle, template, idx):
+def atto3_create_steering_control(packer, can_bus, apply_angle, template, idx):
   values = {
     "STEER_ANGLE": apply_angle,
     "STEER_REQ": 1,
@@ -312,12 +312,12 @@ def atto3_create_steering_control(packer, apply_angle, template, idx):
     "COUNTER": idx % 16,
     "CHECKSUM": 0,
   }
-  msg = packer.make_can_msg("STEERING_MODULE_ADAS", CanBus.ESC, values)
+  msg = packer.make_can_msg("STEERING_MODULE_ADAS", can_bus.ESC, values)
   values["CHECKSUM"] = byd_checksum(CHECKSUM_KEY, msg[1])
-  return packer.make_can_msg("STEERING_MODULE_ADAS", CanBus.ESC, values)
+  return packer.make_can_msg("STEERING_MODULE_ADAS", can_bus.ESC, values)
 
 
-def atto3_create_lkas_hud(packer, cam, idx):
+def atto3_create_lkas_hud(packer, can_bus, cam, idx):
   values = {
     "STEER_ACTIVE_1_1": 1,
     "STEER_ACTIVE_1_2": 1,
@@ -327,12 +327,12 @@ def atto3_create_lkas_hud(packer, cam, idx):
     "COUNTER": idx % 16,
     "CHECKSUM": 0,
   }
-  msg = packer.make_can_msg("LKAS_HUD_ADAS", CanBus.ESC, values)
+  msg = packer.make_can_msg("LKAS_HUD_ADAS", can_bus.ESC, values)
   values["CHECKSUM"] = byd_checksum(CHECKSUM_KEY, msg[1])
-  return packer.make_can_msg("LKAS_HUD_ADAS", CanBus.ESC, values)
+  return packer.make_can_msg("LKAS_HUD_ADAS", can_bus.ESC, values)
 
 
-def atto3_create_acc_control(packer, accel, acc_enabled, idx):
+def atto3_create_acc_control(packer, can_bus, accel, acc_enabled, idx):
   accel = float(np.clip(accel, -3.5, 2.0))
   acc_on_1 = 1 if acc_enabled else 0
   acc_on_2 = 1 if acc_enabled else 0
@@ -360,12 +360,12 @@ def atto3_create_acc_control(packer, accel, acc_enabled, idx):
     "COUNTER": idx % 16,
     "CHECKSUM": 0,
   }
-  msg = packer.make_can_msg("ACC_CMD", CanBus.ESC, values)
+  msg = packer.make_can_msg("ACC_CMD", can_bus.ESC, values)
   values["CHECKSUM"] = byd_checksum(CHECKSUM_KEY, msg[1])
-  return packer.make_can_msg("ACC_CMD", CanBus.ESC, values)
+  return packer.make_can_msg("ACC_CMD", can_bus.ESC, values)
 
 
-def atto3_create_acc_hud(packer, acc_active, set_speed, lead_visible, idx):
+def atto3_create_acc_hud(packer, can_bus, acc_active, set_speed, lead_visible, idx):
   set_speed_dbc = int(set_speed * 2) if set_speed > 0 else 0
   set_speed_dbc = max(0, min(255, set_speed_dbc))
 
@@ -379,6 +379,6 @@ def atto3_create_acc_hud(packer, acc_active, set_speed, lead_visible, idx):
     "COUNTER": idx % 16,
     "CHECKSUM": 0,
   }
-  msg = packer.make_can_msg("ACC_HUD_ADAS", CanBus.ESC, values)
+  msg = packer.make_can_msg("ACC_HUD_ADAS", can_bus.ESC, values)
   values["CHECKSUM"] = byd_checksum(CHECKSUM_KEY, msg[1])
-  return packer.make_can_msg("ACC_HUD_ADAS", CanBus.ESC, values)
+  return packer.make_can_msg("ACC_HUD_ADAS", can_bus.ESC, values)
