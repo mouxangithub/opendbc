@@ -131,8 +131,8 @@ class AccelShaper:
   """The CRZ_INFO command between the plan and the wire, shaped like stock MRCC's.
 
   A hold's release ramps up from the relaxed command, with a bounded breakaway while the car is
-  still stopped. Otherwise the plan is slew-limited, and positive commands follow stock's
-  ceiling and build rate at this speed and lift at stock's rate. The standstill hold's own
+  still stopped. Otherwise the plan is slew-limited, and positive commands are capped by a
+  ceiling and build rate keyed on speed and lift at stock's rate. The standstill hold's own
   commands come last. accel_last is the command sent the frame before.
   """
 
@@ -180,7 +180,7 @@ class AccelShaper:
         accel = rate_limit(accel, accel_last, CarControllerParams.ACCEL_WINDDOWN_LIMIT,
                            CarControllerParams.ACCEL_WINDUP_LIMIT)
         if accel > 0.:
-          # Shape positive commands to stock MRCC's ceiling and build rate at this speed.
+          # Cap positive commands by speed: ceiling and build rate.
           ceiling = float(np.interp(v_ego, CarControllerParams.ACCEL_CEILING_BP, CarControllerParams.ACCEL_CEILING_V))
           build = float(np.interp(v_ego, CarControllerParams.ACCEL_BUILD_BP, CarControllerParams.ACCEL_BUILD_V)) * DT_CTRL
           accel = min(accel, ceiling, max(accel_last, 0.) + build)

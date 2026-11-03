@@ -70,15 +70,16 @@ class CarControllerParams:
   # Permit a bounded breakaway ramp because Mazda longitudinal control has no integrator.
   ACCEL_BREAKAWAY_MAX = 1.45  # m/s2, ceiling for the still-stopped release ramp
   ACCEL_BREAKAWAY_OVERSHOOT = 0.75  # m/s2 above the plan the still-stopped ramp may climb
-  ACCEL_BREAKAWAY_RAMP = 2.5  # m/s3, the still-stopped climb once past stock's release frames
+  ACCEL_BREAKAWAY_RAMP = 5.0  # m/s3, the still-stopped climb once past stock's release frames
 
-  # Shape positive commands like stock MRCC: its accelerating command's ceiling by speed, and its
-  # build rate (taken a third quicker once rolling: the plan sees a lead pull away before the radar
-  # would). Positive commands only, so braking is never held longer than the plan asks.
-  ACCEL_CEILING_BP = [0., 4., 9., 14., 18., 25.]  # m/s
-  ACCEL_CEILING_V = [1.5, 1.75, 1.45, 0.95, 0.85, 0.65]  # m/s2, 14 m/s under stock's 1.05 to hold fourth
-  ACCEL_BUILD_BP = [3., 6., 12., 20.]   # m/s
-  ACCEL_BUILD_V = [ACCEL_RELEASE_RAMP, 0.8, 0.8, 0.6]  # m/s3, stock's own 0.6 at highway speed
+  # Positive command ceiling and build rate by speed. In town the plan already limits jerk, so the
+  # build matches the 3-4 m/s3 other ports send and the ceiling only binds from 11 m/s. At highway
+  # speed both follow stock MRCC (ceiling under stock's 1.05 from 14 m/s, build stock's 0.6 from
+  # 20) to hold the gear. Positive commands only, so braking is never held longer than the plan asks.
+  ACCEL_CEILING_BP = [11., 14., 18., 25.]  # m/s
+  ACCEL_CEILING_V = [ACCEL_MAX, 0.95, 0.85, 0.65]  # m/s2
+  ACCEL_BUILD_BP = [12., 16., 20.]   # m/s
+  ACCEL_BUILD_V = [3.0, 0.8, 0.6]  # m/s3
   # Stock's throttle lift rate, while the plan is still >= 0; a brake request skips it.
   ACCEL_LIFT_LIMIT = -2.0  # m/s3
   # Limit upward plan-command slew in the brake region without delaying braking response.
