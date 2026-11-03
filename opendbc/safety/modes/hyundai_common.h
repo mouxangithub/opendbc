@@ -153,6 +153,9 @@ void hyundai_common_cruise_buttons_check(const int cruise_button, const bool mai
   }
 }
 
+// Keep unconditional: safety.h includes hyundai_canfd.h (whose hooks
+// reference this) in every build, and the F4/dos firmware build does not
+// define CANFD. Body is self-contained (uses the LUT declared above).
 uint32_t hyundai_common_canfd_compute_checksum(const CANPacket_t *msg) {
   int len = GET_LEN(msg);
   uint32_t address = msg->addr;

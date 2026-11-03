@@ -19,9 +19,8 @@ from opendbc.car.honda.values import HondaFlags
 from opendbc.car.hyundai.values import HyundaiFlags
 from opendbc.car.mazda.values import MazdaFlags
 from opendbc.car.subaru.values import SubaruFlags
-from opendbc.car.toyota.values import ToyotaFlags
+from opendbc.car.toyota.values import ToyotaFlags, RADAR_ACC_CAR, SECOC_CAR, TSS2_CAR, ToyotaSafetyFlags
 from opendbc.car.volkswagen.values import VolkswagenFlags
-from opendbc.car.toyota.values import ToyotaSafetyFlags
 from opendbc.sunnypilot.car.hyundai.enable_radar_tracks import enable_radar_tracks as hyundai_enable_radar_tracks
 from opendbc.sunnypilot.car.hyundai.longitudinal.helpers import LongitudinalTuningType
 from opendbc.sunnypilot.car.hyundai.values import HyundaiFlagsSP
@@ -172,6 +171,17 @@ def _initialize_radar_tracks(CP: structs.CarParams, CP_SP: structs.CarParamsSP,
       CP.radarUnavailable = not tracks_enabled
 
 
+# Lateral tune helpers live in lateral_tune.py (zp); re-exported here so the existing
+# `from opendbc.sunnypilot.car.interfaces import ...` call sites keep a single implementation.
+from opendbc.sunnypilot.car.lateral_tune import (  # noqa: F401
+  get_speed_dep_config,
+  get_speed_dep_config_for_car,
+  get_steer_rail_schedule,
+  get_steer_slew_schedule,
+  get_tune_scale,
+)
+
+
 def _initialize_stop_and_go(CP: structs.CarParams, CP_SP: structs.CarParamsSP, params_dict: dict[str, str]) -> None:
   if CP.brand == 'subaru' and not CP.flags & (SubaruFlags.GLOBAL_GEN2 | SubaruFlags.HYBRID):
     stop_and_go = int(params_dict.get("SubaruStopAndGo", 0)) == 1
@@ -189,6 +199,10 @@ def _initialize_toyota(CP: structs.CarParams, CP_SP: structs.CarParamsSP, params
   if CP.brand == 'toyota':
     toyota_stock_long = int(params_dict.get("ToyotaEnforceStockLongitudinal", 0)) == 1
     toyota_stop_and_go_hack = int(params_dict.get("ToyotaStopAndGoHack", 0)) == 1
+    toyota_tss2_long_tuning = int(params_dict.get("ToyotaTSS2Long", 0)) == 1
+    toyota_enhanced_bsm = int(params_dict.get("ToyotaEnhancedBsm", 0)) == 1
+    toyota_auto_brake_hold = int(params_dict.get("ToyotaAutoHold", 0)) == 1
+    toyota_brake_onset = int(params_dict.get("ToyotaBrakeOnset", 0)) == 1
     toyota_tss2_smooth = int(params_dict.get("ToyotaTSS2Smooth", 0)) == 1
 
     if toyota_stock_long:
@@ -203,6 +217,24 @@ def _initialize_toyota(CP: structs.CarParams, CP_SP: structs.CarParamsSP, params
     if toyota_tss2_smooth and CP.flags & ToyotaFlags.TSS2 and CP.openpilotLongitudinalControl:
       CP_SP.flags |= ToyotaFlagsSP.TSS2_SMOOTH.value
 
+    if toyota_tss2_long_tuning:
+      CP_SP.flags |= ToyotaFlagsSP.TSS2_LONG_TUNING.value
+
+    # SecOC cars used to be excluded from the enhanced BSM path. That exclusion is not needed:
+    # toyota_tx_hook already whitelists these UDS frames for secoc cars (sp_valid_uds_msgs), and
+    # toyota_secoc_pt.dbc now carries the DEBUG (0x758) message so carstate can decode the reply.
+    # Motivation: on the SecOC platforms the stock 0x3F6 BSM frame behaves as a static switch-state
+    # broadcast (ADJACENT_ENABLED/APPROACHING_ENABLED set, all four detection bits low across ~6 h
+    # of logged driving), so the diagnostic channel is the only known route to a real blind spot
+    # state there. Still opt-in through ToyotaEnhancedBsm.
+    if toyota_enhanced_bsm and CP.carFingerprint in TSS2_CAR:
+      CP_SP.flags |= ToyotaFlagsSP.SP_ENHANCED_BSM.value
+
+    if toyota_auto_brake_hold and CP.carFingerprint in (TSS2_CAR - RADAR_ACC_CAR - SECOC_CAR):
+      CP_SP.flags |= ToyotaFlagsSP.SP_AUTO_BRAKE_HOLD.value
+
+    if toyota_brake_onset:
+      CP_SP.flags |= ToyotaFlagsSP.SP_BRAKE_ONSET.value
 
 def _initialize_mazda(CP: structs.CarParams, CP_SP: structs.CarParamsSP, params_dict: dict[str, str]) -> None:
   if CP.brand == 'mazda':

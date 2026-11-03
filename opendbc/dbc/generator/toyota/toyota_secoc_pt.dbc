@@ -123,6 +123,15 @@ BO_ 1014 BSM: 8 XXX
  SG_ R_APPROACHING : 10|1@0+ (1,0) [0|1] "" XXX
  SG_ APPROACHING_ENABLED : 15|1@0+ (1,0) [0|1] "" XXX
 
+BO_ 1880 DEBUG: 8 XXX
+ SG_ BLINDSPOTSIDE : 7|8@0+ (1,0) [0|255] "" XXX
+ SG_ BLINDSPOT : 38|1@0+ (1,0) [0|15] "" XXX
+ SG_ BLINDSPOTD1 : 47|8@0+ (1,0) [0|255] "" XXX
+ SG_ BLINDSPOTD2 : 55|8@0+ (1,0) [0|255] "" XXX
+
+CM_ SG_ 1880 BLINDSPOTSIDE "UDS sub-address byte of the 0x758 response: 0x41 left BSM ECU, 0x42 right BSM ECU. Any other value (e.g. 0x40, the ACC/radar tester handshake) is not a blind spot reply";
+CM_ SG_ 1880 BLINDSPOTD1 "zone code, not a distance: 0 idle, 1-31 transitional noise, ~46-53 occupied. see opendbc/sunnypilot/car/toyota/enhanced_bsm.py";
+
 CM_ SG_ 305 STEER_ANGLE_CMD "Used in place of STEERING_LTA.STEER_ANGLE_CMD on SecOC cars";
 CM_ SG_ 387 ACCEL_CMD "Used in place of ACC_CONTROL.ACCEL_CMD on SecOC cars";
 CM_ SG_ 401 STEER_REQUEST "enable bit for steering, 1 to steer, 0 to not";

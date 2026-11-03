@@ -15,9 +15,9 @@ from opendbc.car.toyota.values import CAR as TOYOTA
 from opendbc.car.values import Platform
 from opendbc.car.volkswagen.values import CAR as VOLKSWAGEN
 from opendbc.car.body.values import CAR as COMMA
-from opendbc.car.byd.values import CAR as BYD
 from opendbc.car.psa.values import CAR as PSA
 from opendbc.car.mg.values import CAR as MG
+from opendbc.car.byd.values import CAR as BYD
 
 # FIXME: add routes for these cars
 non_tested_cars = [
@@ -59,6 +59,19 @@ non_tested_cars = [
   GM.CHEVROLET_MALIBU_NON_ACC_9TH_GEN,
   GM.CADILLAC_XT5_NON_ACC_1ST_GEN,
 
+  BYD.BYD_HAN_DM_20, #byd routes to be added later with official device
+  BYD.BYD_HAN_EV_20,
+  BYD.BYD_QIN_PLUS_DMI_23,
+  BYD.BYD_SONG_PLUS_DMI_21,
+  BYD.BYD_SONG_PLUS_DMI_22,
+  BYD.BYD_SONG_PLUS_DMI_23,
+  BYD.BYD_SONG_PRO_DMI_22,
+  BYD.BYD_TANG_DM,
+  BYD.BYD_TANG_DMI_21,
+  BYD.BYD_YUAN_PLUS_DMI_22,
+
+  # no uploadable route for this PRC-market patched platform
+  TOYOTA.TOYOTA_SIENNA_PATCHED,
   # no public route yet, the 2016.5 swap car is the only known device-validated KE
   MAZDA.MAZDA_CX5_KE,
   # no public route yet, one user car in Japan
@@ -74,6 +87,8 @@ class CarTestRoute(NamedTuple):
 
 routes = [
   CarTestRoute("efdf9af95e71cd84/2022-05-13--19-03-31", COMMA.COMMA_BODY),
+
+  CarTestRoute("b8b2d1a1df1b3aad/000000a0--7c51639c22", BYD.BYD_ATTO3, segment=0),
 
   CarTestRoute("c5e3aa51055c8f47|2023-12-06--20-01-44", CHRYSLER.JEEP_CHEROKEE_5TH_GEN),
   CarTestRoute("0c94aa1e1296d7c6/2021-05-05--19-48-37", CHRYSLER.JEEP_GRAND_CHEROKEE),
@@ -378,7 +393,7 @@ routes = [
 
   CarTestRoute("6a7075a4fdd765ee/0000004e--1f612006dd", PSA.PSA_PEUGEOT_208),
 
-  CarTestRoute("148fa33c79475c93/00000002--bb5e1aa449", BYD.BYD_ATTO_3),
+  CarTestRoute("148fa33c79475c93/00000002--bb5e1aa449", BYD.BYD_ATTO3),
 
   CarTestRoute("bc095dc92e101734/000000db--ee9fe46e57", RIVIAN.RIVIAN_R1),
   CarTestRoute("c70d59e4150956fc/0000006e--48bfbfda01", RIVIAN.RIVIAN_R1), # GEN2
