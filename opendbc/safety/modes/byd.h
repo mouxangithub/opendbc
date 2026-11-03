@@ -169,14 +169,21 @@ static void byd_rx_hook(const CANPacket_t *to_push) {
         brake_pressed = (to_push->data[1] != 0U);
       } else if (addr == BYD_CANADDR_N3_WHEEL_SPEED) {
         // IPB_0x10C : WheelSpeed_FL 48|12@1+, WheelSpeed_RR 84|12@1+ (x0.06875 km/h)
+        // 64B CAN FD feedback frame: on STM32F4 (classic-only dos panda) it can
+        // never be received and CANPacket_t only carries 8 data bytes, so the
+        // bit extraction past data[7] must be compiled out (can.h CANPACKET_DATA_SIZE_MAX).
+#ifdef CANFD
         uint16_t speed_fl = (uint16_t)(to_push->data[6] | ((to_push->data[7] & 0x0FU) << 8));
         uint16_t speed_rr = (uint16_t)(to_push->data[10] | ((to_push->data[11] & 0x0FU) << 8));
         vehicle_moving = ((speed_fl != 0U) || (speed_rr != 0U));
         // Vehicle_speed : 35|12@1+ (x0.06875 km/h)
         uint16_t veh_speed = (uint16_t)(((to_push->data[4] >> 3) | (to_push->data[5] << 5)) & 0xFFFU);
         UPDATE_VEHICLE_SPEED((float)(veh_speed * 0.06875) * KPH_TO_MS);
+#endif
       } else if (addr == BYD_CANADDR_N3_EPS_STEER) {
         // EPS_0x06D : EPS_SteerWheelAg 77|16@1- (x0.1 deg), EPS_DrvrSteerTq 122|11@1- (x0.02 Nm)
+        // Same 64B FD-only gating as IPB_0x10C above.
+#ifdef CANFD
         int angle_meas_new = (int)(((to_push->data[9] >> 5) | (to_push->data[10] << 3) | (to_push->data[11] << 11)) & 0xFFFFU);
         angle_meas_new = to_signed(angle_meas_new, 16);
         update_sample(&angle_meas, angle_meas_new);
@@ -184,6 +191,7 @@ static void byd_rx_hook(const CANPacket_t *to_push) {
         int torque_driver_new = (int)(((to_push->data[15] >> 2) | (to_push->data[16] << 6)) & 0x7FFU);
         if (torque_driver_new >= 1024) torque_driver_new -= 2048;
         update_sample(&torque_driver, torque_driver_new);
+#endif
       }
     } else if (bus == BYD_CANBUS_MPC) {
       if (addr == BYD_CANADDR_ACC_HUD_ADAS) {
