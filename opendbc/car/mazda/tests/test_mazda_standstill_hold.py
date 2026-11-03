@@ -10,8 +10,12 @@ debounce, the RESUME_UNLATCHING pulse and its one retry.
 import pytest
 
 from opendbc.car import DT_CTRL
-from opendbc.car.mazda.longitudinal import (RELEASE_ACCEL, RELEASE_DEBOUNCE_FRAMES, RELEASE_SETTLE_FRAMES, RESUME_REPULSE_FRAMES,
-                                            RESUME_UNLATCH_LATCHED_FRAMES, StandstillHold)
+from opendbc.car.mazda.longitudinal import (RELEASE_ACCEL, RELEASE_DEBOUNCE_FRAMES, RELEASE_FIRM_ACCEL, RELEASE_FIRM_FRAMES,
+                                            RELEASE_SETTLE_FRAMES, RESUME_REPULSE_FRAMES, RESUME_UNLATCH_LATCHED_FRAMES,
+                                            StandstillHold)
+
+# A positive plan under the firm threshold, so the release runs the full debounce.
+GENTLE = RELEASE_FIRM_ACCEL - 0.1
 
 
 def drive(sm, frames, **kwargs):
@@ -27,7 +31,7 @@ def latched_release(sm):
   # a body-latched hold released by the plan: the first pulse fires with the release
   drive(sm, 1, stopping=True)
   drive(sm, 100, stopping=True, standstill=True, body_hold=True)
-  drive(sm, RELEASE_DEBOUNCE_FRAMES, standstill=True, body_hold=True, plan_accel=0.5)
+  drive(sm, RELEASE_DEBOUNCE_FRAMES, standstill=True, body_hold=True, plan_accel=GENTLE)
   assert sm.latched_release and sm.resume_unlatching
 
 
@@ -72,14 +76,45 @@ def test_released_when_the_plan_asks_to_move():
   assert sm.holding
   # the release is debounced: a plan asking to move for less than the window changes nothing
   # (the body keeps its own latch until the pulse plays, so body_hold stays up here)
-  drive(sm, RELEASE_DEBOUNCE_FRAMES - 1, standstill=True, body_hold=True, plan_accel=0.5)
+  drive(sm, RELEASE_DEBOUNCE_FRAMES - 1, standstill=True, body_hold=True, plan_accel=GENTLE)
   assert sm.holding and not sm.resume_unlatching
-  drive(sm, 1, standstill=True, body_hold=True, plan_accel=0.5)
+  drive(sm, 1, standstill=True, body_hold=True, plan_accel=GENTLE)
   assert not sm.holding and not sm.car_has_hold
   # the body owned the brakes, so this is the latched family: the pulse fires with the
   # release. The body answers nothing else -- deferring behind silence (route 0000011d)
   # and behind a positive nudge (route 0000012c) both just delayed the resume.
   assert sm.latched_release and sm.resume_unlatching
+
+
+@pytest.mark.parametrize("body_hold", [False, True])
+def test_firm_plan_skips_the_debounce(body_hold):
+  sm = StandstillHold()
+  # a step request (a lead launching hard, the maneuver tests) opens the hold after
+  # RELEASE_FIRM_FRAMES instead of the full debounce; standstill blips never got this high
+  drive(sm, 1, stopping=True)
+  drive(sm, 100, stopping=True, standstill=True, body_hold=body_hold)
+  drive(sm, RELEASE_FIRM_FRAMES - 1, standstill=True, body_hold=body_hold, plan_accel=RELEASE_FIRM_ACCEL + 0.01)
+  assert sm.holding
+  drive(sm, 1, standstill=True, body_hold=body_hold, plan_accel=RELEASE_FIRM_ACCEL + 0.01)
+  assert not sm.holding and sm.just_released
+  assert sm.resume_unlatching == body_hold
+  # a firm request that eases to a gentle plan keeps the hold open
+  drive(sm, RELEASE_DEBOUNCE_FRAMES, standstill=True, body_hold=body_hold, plan_accel=0.05)
+  assert not sm.holding
+
+
+def test_firm_plan_waits_out_a_running_pulse():
+  sm = StandstillHold()
+  # re-held mid-pulse, a firm request cannot fire a second release until the pulse ends
+  latched_release(sm)
+  drive(sm, 1, stopping=True, standstill=True, body_hold=True, plan_accel=-1.0)
+  assert sm.holding and sm.resume_unlatching
+  remaining = sm.unlatch_frames
+  for _ in range(remaining - 1):
+    drive(sm, 1, standstill=True, body_hold=True, plan_accel=1.0)
+    assert sm.holding, "a firm request reopened the hold inside a running pulse"
+  drive(sm, RELEASE_FIRM_FRAMES + 1, standstill=True, body_hold=True, plan_accel=1.0)
+  assert not sm.holding
 
 
 def test_release_holds_for_as_long_as_the_plan_wants_to_move():
@@ -170,9 +205,9 @@ def test_latched_release_pulses_immediately_and_runs_its_length():
   # and 0000012c), so waiting only delays the resume. One pulse, stock's latched length.
   drive(sm, 1, stopping=True)
   drive(sm, 100, stopping=True, standstill=True, body_hold=True)
-  drive(sm, RELEASE_DEBOUNCE_FRAMES - 1, standstill=True, body_hold=True, plan_accel=0.5)
+  drive(sm, RELEASE_DEBOUNCE_FRAMES - 1, standstill=True, body_hold=True, plan_accel=GENTLE)
   assert not sm.resume_unlatching
-  drive(sm, 1, standstill=True, body_hold=True, plan_accel=0.5)
+  drive(sm, 1, standstill=True, body_hold=True, plan_accel=GENTLE)
   assert sm.resume_unlatching, "the pulse must fire with the release"
   drive(sm, RESUME_UNLATCH_LATCHED_FRAMES, standstill=True, body_hold=True, plan_accel=0.5)
   assert not sm.resume_unlatching, "pulse outran its length"

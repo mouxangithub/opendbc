@@ -15,6 +15,12 @@ RESUME_UNLATCH_LATCHED_FRAMES = int(0.18 / DT_CTRL)
 RESUME_REPULSE_FRAMES = int(1.0 / DT_CTRL)
 # Debounce movement requests before releasing a standstill hold.
 RELEASE_DEBOUNCE_FRAMES = int(0.2 / DT_CTRL)
+# A plan above RELEASE_FIRM_ACCEL is a firm request to move and skips most of the debounce. Of 26
+# standstill blips across 683 alpha-long segments, all but one peaked at or under 0.25; that one
+# (0.47) lasted 1.4 s and the debounce releases it anyway. Real launches ramp through 0.3 at a
+# median 0.3 s, so this mainly speeds step requests.
+RELEASE_FIRM_ACCEL = 0.3  # m/s^2
+RELEASE_FIRM_FRAMES = int(0.05 / DT_CTRL)
 # Arriving at a stop, the e2e plan drifts up to +0.11 for up to 0.4 s before its shouldStop lands,
 # always starting within 0.2 s of standstill. For RELEASE_SETTLE_FRAMES of standstill a hold opens
 # only above RELEASE_ACCEL; after that any sustained positive plan is a request to move, since a
@@ -63,6 +69,8 @@ class StandstillHold:
     self.car_has_hold = False
     self.unlatch_frames = 0
     self.release_frames = 0
+    self.firm_frames = 0
+    self.opened = False  # the plan opened the current stop's hold and still wants to move
     self.latched_release = False
     self.just_released = False
     self.latched_frames = 0  # frames waiting for the body ECU to release its hold
@@ -79,14 +87,20 @@ class StandstillHold:
     was_holding = self.holding
     self.standstill_frames = self.standstill_frames + 1 if standstill else 0
     # Debounce plan movement requests: opening a hold just after arriving takes RELEASE_ACCEL,
-    # otherwise any positive plan. Driver throttle releases the hold immediately.
+    # otherwise any positive plan. A firm plan opens it sooner, but never inside a running
+    # pulse, so a second release cannot fire before the first pulse ends. Once open, the hold
+    # stays open while the plan stays positive. Driver throttle releases the hold immediately.
     settling = self.standstill_frames <= RELEASE_SETTLE_FRAMES
     release_accel = RELEASE_ACCEL if was_holding and settling else 0.
     self.release_frames = self.release_frames + 1 if plan_accel > release_accel else 0
-    plan_wants_go = self.release_frames >= RELEASE_DEBOUNCE_FRAMES
+    self.firm_frames = self.firm_frames + 1 if plan_accel > RELEASE_FIRM_ACCEL else 0
+    firm = self.firm_frames >= RELEASE_FIRM_FRAMES and self.unlatch_frames == 0
+    plan_wants_go = self.release_frames >= RELEASE_DEBOUNCE_FRAMES or firm or \
+                    (self.opened and self.release_frames > 0)
     # Keep STOPPING off once the plan or driver requests acceleration.
     release = gas_pressed or plan_wants_go
     self.holding = not release and (stopping or standstill)
+    self.opened = plan_wants_go and (self.opened or (was_holding and not self.holding))
 
     if self.unlatch_frames > 0:
       self.unlatch_frames -= 1
