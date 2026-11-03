@@ -26,9 +26,9 @@ def _copy_values(src, keys):
   return {key: src[key] for key in keys}
 
 
-def _make_msg_with_checksum(packer, name, bus, values, byte_key=175):
+def _make_msg_with_checksum(packer, name, bus, values, byte_key=175, checksum_sig="sig_xbjyma"):
   dat = packer.make_can_msg(name, bus, values)[1]
-  values["sig_xbjyma"] = byd_checksum(byte_key, dat)
+  values[checksum_sig] = byd_checksum(byte_key, dat)
   return packer.make_can_msg(name, bus, values)
 
 
@@ -226,6 +226,64 @@ def create_mpc_pcm_button(packer, pt_msg: dict, freeze_updown_input, counter, up
   elif updown_cmd:
     values.update({"sig_ymtlod": updown_cmd})
   return _make_msg_with_checksum(packer, "CID_YHMGPU", CanBus.MPC, values)
+
+
+# --- N3 platform (byd_n3_pt.dbc, CAN FD SA6/N3A1) ---
+# 0x1E2 angle command: same core layout as the generic port's CID_TCDUBH, but the
+# status is a single 2-bit enum (0=Inhibited 1=Ready 2=Active) and the checksum/
+# counter carry SA6 suffix names. 0x32E ACC command: same field family as
+# CID_RJDCMR with offset -7 (range -7..5.75 m/s2) and ACC_Mode at bit 43 LE.
+# Checksum algorithm presumed the 0xAF nibble fold (same frame family); MUST be
+# verified against real-car TX before on-road longitudinal use.
+
+N3_ANGLE_ST_INHIBITED = 0
+N3_ANGLE_ST_READY = 1
+N3_ANGLE_ST_ACTIVE = 2
+
+N3_ACC_MODE_OFF = 0
+N3_ACC_MODE_ACTIVE = 3
+
+
+def n3_angle_control(packer, CP, req_angle, max_torque_nm, active, req_prepare, counter):
+  values = {
+    "MotorTorqueUpperLimit_S": max_torque_nm,   # Nm, DBC factor 0.01, 0..5
+    "MotorTorqueLowerLimit_S": -max_torque_nm,  # Nm, DBC factor 0.01, -5..0
+    "ADC_AngleReq_St_S": N3_ANGLE_ST_ACTIVE if active else (N3_ANGLE_ST_READY if req_prepare else N3_ANGLE_ST_INHIBITED),
+    "ADC2SCU_P_Req": 0,
+    "ADC_AngleReq_S": req_angle,                # deg, DBC factor 0.1
+    "ADC_PrecisionRequest": 0,
+    "SuspInhibitReq1E2_S": 0,
+    "SuspInhibitReq1E2_Valid_S": 0,
+    "Counter_1E2_S": counter,
+    "Checksum_1E2_S": 0,
+  }
+  return _make_msg_with_checksum(packer, "ADC_0x1E2", CanBus.ESC, values, checksum_sig="Checksum_1E2_S")
+
+
+def n3_acc_cmd(packer, CP, accel, byd_jerk, rfss, sss, long_active, accmode, counter, pcm_cancel):
+  if pcm_cancel:
+    accmode = N3_ACC_MODE_OFF
+    accel = 0.0
+  values = {
+    "ACC_Axv_Cv_Aim_S_32E": accel,                     # m/s2, DBC x0.05 offset -7
+    "Axv_Cv_Coft_Band_Upper_Val_S_32E": byd_jerk.cb_upper,
+    "Axv_Cv_Coft_Band_Lower_Val_S_32E": byd_jerk.cb_lower,
+    "ADt_Upper_Limit_Axv_Cv_S_32E": byd_jerk.jerk_u,   # m/s3, DBC x0.2
+    "Adt_Lower_Limit_Axv_Cv_S_32E": byd_jerk.jerk_l,
+    "ACC_Drive_Off_Req_S_32E": 1 if rfss >= 2 else rfss,
+    "ACC_DecTo_Stop_Req_S_32E": 1 if sss >= 2 else sss,
+    "ACC_Minimum_Braking_S_32E": 0,
+    "Brake_Preferred_S_32E": 0,
+    "ACC_Mode_S_32E": accmode,                         # 0=OFF .. 3=Active (VAL_)
+    "ESP_VLC_Shut_Down_Request_S_32E": 0,
+    "LSM_Request_Status_S_32E": 0,
+    "Counter_32E_S": counter,
+    "Checksum_32E_S": 0,
+  }
+  if not long_active and not pcm_cancel:
+    # passive copy of the camera's aim so the stock ACC decays smoothly
+    values["ACC_Axv_Cv_Aim_S_32E"] = 0.0
+  return _make_msg_with_checksum(packer, "ADC_0x32E", CanBus.ESC, values, checksum_sig="Checksum_32E_S")
 
 
 # --- ATTO3 (byd_general.dbc, kept from the local validated port) ---

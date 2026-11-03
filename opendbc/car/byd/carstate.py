@@ -9,7 +9,7 @@ from opendbc.car.interfaces import CarStateBase
 from opendbc.car.byd.tuning import Tuning
 from opendbc.car.byd.values import (
   BydFlags, CanBus, CarControllerParams, DBC, LKASConfig, PLATFORM_ATTO3_GENERAL,
-  PLATFORM_HAN_DMI, PLATFORM_QIN_SEAL06, PLATFORM_SEAL, PLATFORM_TENGSHI, PT_RADAR_CAR,
+  PLATFORM_HAN_DMI, PLATFORM_N3, PLATFORM_QIN_SEAL06, PLATFORM_SEAL, PLATFORM_TENGSHI, PT_RADAR_CAR,
 )
 from opendbc.car.byd import bydcan
 from opendbc.car.byd.byd_params import BydParams
@@ -30,10 +30,17 @@ class CarState(CarStateBase, MadsCarState, CarStateExt):
 
     self.CP = CP
     self.is_atto3_general = CP.carFingerprint in PLATFORM_ATTO3_GENERAL
+    self.is_n3 = CP.carFingerprint in PLATFORM_N3
 
     can_define = CANDefine(DBC[CP.carFingerprint][Bus.pt])
     self.frame = 0
     self.params = BydParams()
+
+    if self.is_n3:
+      # VCU_Goal_Gear_S: 1=P 2=R 3=N 4=D (VAL_ in byd_n3_pt.dbc)
+      self.n3_gear_values = can_define.dv["VCU_0x342"]["VCU_Goal_Gear_S"]
+      self.n3_speed_set_prev = 0
+      return
 
     if self.is_atto3_general:
       self.shifter_values = can_define.dv["DRIVE_STATE"]["GEAR"]
@@ -388,12 +395,74 @@ class CarState(CarStateBase, MadsCarState, CarStateExt):
 
     ret.buttonEvents = button_events
 
+  # --------------------------------------------------------------------------
+  # N3 platform (byd_n3_pt.dbc, CAN FD SA6/N3A1)
+  # --------------------------------------------------------------------------
+  def _update_n3(self, ret: structs.CarState, ret_sp: structs.CarStateSP, can_parsers) -> None:
+    cp = can_parsers[Bus.pt]
+    cp_cam = can_parsers[Bus.cam]
+
+    # --- steering: EPS_0x06D @10ms (64B), torque in physical Nm ---
+    eps = cp.vl["EPS_0x06D"]
+    ret.steeringAngleOffsetDeg = 0.0
+    ret.steeringAngleDeg = eps["EPS_SteerWheelAg"] if eps["EPS_SteerWheelAgVld"] else 0.0
+    ret.steeringRateDeg = eps["EPS_SteerWheelAgRat"] if eps["EPS_SteerWheelAgRatVld"] else 0.0
+    ret.steeringTorque = eps["EPS_DrvrSteerTq"]  # Nm (factor 0.02 in DBC)
+    ret.steeringTorqueEps = eps["EPS_DrvrSteerTqFlt"]
+    ret.steeringPressed = self.update_steering_pressed(abs(ret.steeringTorque) > Tuning.N3_STEER_PRESSED_NM, 5)
+
+    # --- wheel speeds: IPB_0x10C @10ms (64B), x0.06875 km/h ---
+    ipb = cp.vl["IPB_0x10C"]
+    fl = ipb["WheelSpeed_FL"] * 0.06875 / 3.6
+    fr = ipb["WheelSpeed_FR"] * 0.06875 / 3.6
+    rl = ipb["WheelSpeed_RL"] * 0.06875 / 3.6
+    rr = ipb["WheelSpeed_RR"] * 0.06875 / 3.6
+    ret.wheelSpeeds.fl = fl
+    ret.wheelSpeeds.fr = fr
+    ret.wheelSpeeds.rl = rl
+    ret.wheelSpeeds.rr = rr
+    ret.vEgoRaw = (fl + fr + rl + rr) / 4.0
+    ret.vEgo, ret.aEgo = self.update_speed_kf(ret.vEgoRaw)
+    ret.vEgoCluster = ret.vEgoRaw
+    ret.standstill = ret.vEgoRaw < 0.1
+
+    # --- pedals + gear: VCU_0x342 @50ms ---
+    vcu = cp.vl["VCU_0x342"]
+    ret.gasPressed = vcu["VCU_Accelerograph_Depth_S"] > 0
+    ret.brakePressed = vcu["VCU_Brake_Depth_S"] > 0
+    gear_raw = int(vcu["VCU_Goal_Gear_S"])
+    ret.gearShifter = self.parse_gear_shifter(self.n3_gear_values.get(gear_raw, None))
+
+    # --- ACC HUD / state: ADC_0x32D @20ms ---
+    hud = cp_cam.vl["ADC_0x32D"]
+    acc_mode = int(hud["ACC_Mode_Display_S"])
+    # ACC_Mode_Display: 0=OFF 1=Passive 2=StandBy 3=Active 4=BrakeOnly 5=Override
+    ret.cruiseState.available = acc_mode >= 2
+    ret.cruiseState.enabled = acc_mode in (3, 5)
+    ret.cruiseState.speed = hud["Set_Speed_S"] * CV.KPH_TO_MS
+    ret.cruiseState.standstill = False
+    self.adas_set_dist = int(hud["Tau_Gap_Set_S"])
+
+    ret.stockFcw = bool(hud["CCR_FCW_Error_S"])
+    ret.stockAeb = bool(hud["CCR_AEB_Error_S"])
+
+    # --- steering wheel switches: SWS_0x3B0 @50ms ---
+    # SWS_Speed_Set: 0=initial, 1/2=decel taps, 3/4=accel taps
+    speed_set = int(cp.vl["SWS_0x3B0"]["SWS_Speed_Set_S"])
+    ret.buttonEvents = create_button_events(speed_set, self.n3_speed_set_prev, {
+      1: ButtonType.decelCruise, 2: ButtonType.decelCruise,
+      3: ButtonType.accelCruise, 4: ButtonType.accelCruise,
+    })
+    self.n3_speed_set_prev = speed_set
+
   def update(self, can_parsers) -> tuple[structs.CarState, structs.CarStateSP]:
     ret = structs.CarState()
     ret_sp = structs.CarStateSP()
 
     if self.is_atto3_general:
       self._update_atto3(ret, ret_sp, can_parsers)
+    elif self.is_n3:
+      self._update_n3(ret, ret_sp, can_parsers)
     else:
       self._update_generic(ret, can_parsers)
 
@@ -404,6 +473,20 @@ class CarState(CarStateBase, MadsCarState, CarStateExt):
 
   @staticmethod
   def get_can_parsers(CP, CP_SP):
+    if CP.carFingerprint in PLATFORM_N3:
+      # bus 0 = powertrain/chassis entry (EPS/IPB/VCU/SWS), bus 2 = ADAS domain
+      # (ADC echo + our commands). Physical wiring TBD on a real car.
+      pt_messages = [
+        ("EPS_0x06D", 10), ("IPB_0x10C", 10), ("VCU_0x342", 50), ("SWS_0x3B0", 50),
+      ]
+      cam_messages = [
+        ("ADC_0x32D", 20), ("ADC_0x32E", 20), ("ADC_0x1E2", 20), ("ADC_0x316", 20),
+      ]
+      return {
+        Bus.pt: CANParser(DBC[CP.carFingerprint][Bus.pt], pt_messages, CanBus.ESC),
+        Bus.cam: CANParser(DBC[CP.carFingerprint][Bus.pt], cam_messages, CanBus.MPC),
+      }
+
     if CP.carFingerprint in PLATFORM_ATTO3_GENERAL:
       pt_messages = [
         ("STEER_MODULE_2", 100),

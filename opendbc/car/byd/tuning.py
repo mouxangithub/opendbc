@@ -25,6 +25,9 @@ class Tuning:
   # 人为扭动方向盘的阈值，大于这个值才认为方向盘被故意扭动了，变道辅助涉及它
   STEER_PRESSED_THRESHOLD = 56
 
+  # N3 (SA6): EPS_DrvrSteerTq is physical Nm (x0.02); driver-override threshold in Nm
+  N3_STEER_PRESSED_NM = 0.7
+
   # 解决某些D9或者唐车型，离手时间过久，EPS会退出问题
   HANDSOFF_ANGLE = [4, 11, 18]
   HANDSOFF_PERIOD = [5, 10, 15]

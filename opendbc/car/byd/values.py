@@ -64,6 +64,7 @@ class BydSafetyFlags(IntFlag):
   ANGLE_MODE = 0x100
   ACC_ON1 = 0x200
   ACC_CRUISEDISP = 0x400
+  N3 = 0x800
 
 
 class CarControllerParams:
@@ -232,6 +233,14 @@ class CAR(Platforms):
     CarSpecs(wheelbase=2.720, steerRatio=14.8, centerToFrontRatio=0.44, tireStiffnessFactor=0.7983),
     dbc_dict={Bus.pt: "byd_general", Bus.cam: "byd_general"},
   )
+  # BYD N3 platform (SA6 / N3A1, wangchao). Derived from the ADC V2.8.0
+  # 20251225 CAN FD platform matrices; wheelbase/steerRatio are placeholders
+  # until confirmed on a real car.
+  BYD_SA6_N3 = BydPlatformConfig(
+    [BydCarDocs("BYD SA6 (N3) 2025-26")],
+    CarSpecs(wheelbase=2.750, steerRatio=15.0, centerToFrontRatio=0.44, tireStiffnessFactor=1.0),
+    dbc_dict={Bus.pt: "byd_n3_pt"},
+  )
 
 
 class DBC(dict):
@@ -243,6 +252,8 @@ class DBC(dict):
 DBC = DBC({car: {Bus.pt: "byd_generic_pt"} for car in CAR})
 # ATTO3 keeps its own validated DBC set.
 DBC[CAR.BYD_ATTO3] = {Bus.pt: "byd_general", Bus.cam: "byd_general"}
+# N3 (SA6) uses the CAN FD platform matrix subset.
+DBC[CAR.BYD_SA6_N3] = {Bus.pt: "byd_n3_pt"}
 
 FW_QUERY_CONFIG = FwQueryConfig(
   fw_version_regex=br"[\x00-\xff]+",
@@ -268,6 +279,8 @@ PLATFORM_TENGSHI = {CAR.BYD_FRIGATE_07_DMI, CAR.BYD_HAN_DMI_22J, CAR.BYD_SEAL_06
                     CAR.BYD_SEAL_EV_22, CAR.BYD_SONG_L_DMI_24, CAR.BYD_TENGSHI_D9_22, CAR.BYD_TENGSHI_D9_22R,
                     CAR.BYD_TENGSHI_D9_24}
 PLATFORM_ATTO3_GENERAL = {CAR.BYD_ATTO3}
+# BYD N3 CAN FD platform (SA6/N3A1)
+PLATFORM_N3 = {CAR.BYD_SA6_N3}
 # 通用 DBC（byd_generic_pt.dbc）下的角度控制平台：发送 0x1E2 角度命令，C 层须走角度校验
 PLATFORM_ANGLE_GENERIC = (PLATFORM_SEAL | PLATFORM_TENGSHI | PLATFORM_QIN_SEAL06)
 
@@ -294,3 +307,5 @@ EXP_LONG_CAR = {CAR.BYD_FRIGATE_07_DMI, CAR.BYD_HAN_DMI_22, CAR.BYD_HAN_DMI_22J,
 PLATFORM_SONG_PLUS_DMI |= {CAR.BYD_SONG_PLUS_DMI_23}
 TORQUE_LAT_CAR |= {CAR.BYD_SONG_PLUS_DMI_23}
 EXP_LONG_CAR |= {CAR.BYD_SONG_PLUS_DMI_23}
+# N3: angle control (0x1E2) + openpilot longitudinal (0x32E rewrite)
+EXP_LONG_CAR |= PLATFORM_N3

@@ -19,6 +19,12 @@
 #define BYD_CANADDR_GEN_STEERING_MODULE_ADAS  0x1E2  // generic-angle DBC steering command (CID_TCDUBH, same addr/layout as ATTO3)
 #define BYD_CANADDR_WHEEL_SPEED           0x122  // per-wheel speeds
 
+// N3 (SA6/N3A1, byd_n3_pt.dbc) addresses. 0x1E2/0x32D/0x32E/0x3B0 are shared
+// with the definitions above; the N3-specific feedback frames are:
+#define BYD_CANADDR_N3_EPS_STEER    0x6D    // EPS_0x06D: wheel/pinion angle + driver torque (64B @10ms)
+#define BYD_CANADDR_N3_WHEEL_SPEED  0x10C   // IPB_0x10C: wheel speeds + vehicle speed (64B @10ms)
+#define BYD_CANADDR_N3_PEDAL_GEAR   0x342   // VCU_0x342: gas/brake depth % + goal gear
+
 #define BYD_CANBUS_ESC  0
 #define BYD_CANBUS_MRR  1
 #define BYD_CANBUS_MPC  2
@@ -36,6 +42,10 @@ static bool byd_steering = false;
 static uint32_t byd_last_steer_tx = 0U;
 static bool byd_hud = false;
 static uint32_t byd_last_hud_tx = 0U;
+// N3: openpilot owns the 0x32E ACC command while transmitting it; the camera's
+// copy on the ADAS bus is blocked under the same takeover-timeout regime.
+static bool byd_acc_cmd_owned = false;
+static uint32_t byd_last_acc_tx = 0U;
 
 typedef enum {
   HAN_TANG_DMEV,
@@ -43,7 +53,8 @@ typedef enum {
   SONG_PLUS_DMI,
   QIN_PLUS_DMI,
   ATTO3_GENERAL,
-  ANGLE_GENERIC
+  ANGLE_GENERIC,
+  N3
 } BydPlatform;
 static BydPlatform byd_platform;
 
@@ -77,7 +88,15 @@ static uint32_t byd_get_checksum(const CANPacket_t *msg) {
 
 static uint8_t byd_get_counter(const CANPacket_t *msg) {
   uint8_t cnt = 0U;
-  if ((msg->addr == BYD_CANADDR_ACC_HUD_ADAS) || (msg->addr == BYD_CANADDR_ACC_CMD)) {
+  if (byd_platform == N3) {
+    // N3: 0x1E2/0x32D carry Counter : 52|4@1+ (byte 6 high nibble); 0x32E
+    // carries Counter_32E_S : 48|4@1+ (byte 6 low nibble, like the legacy HUD).
+    if (msg->addr == BYD_CANADDR_ACC_CMD) {
+      cnt = msg->data[6] & 0xFU;
+    } else {
+      cnt = (uint8_t)(msg->data[6] >> 4);
+    }
+  } else if ((msg->addr == BYD_CANADDR_ACC_HUD_ADAS) || (msg->addr == BYD_CANADDR_ACC_CMD)) {
     // COUNTER : 48|4@1+ (big-endian, low nibble of byte 6)
     cnt = msg->data[6] & 0xFU;
   } else {
@@ -139,6 +158,41 @@ static void byd_rx_hook(const CANPacket_t *to_push) {
         bool acc_hud_on1 = GET_BIT(to_push, 22U) != 0U;
         bool acc_hud_on2 = GET_BIT(to_push, 20U) != 0U;
         acc_main_on = acc_hud_on1 || acc_hud_on2;
+      }
+    }
+  } else if (byd_platform == N3) {
+    // N3 (SA6/N3A1): angle control on 0x1E2, longitudinal on 0x32E.
+    if (bus == BYD_CANBUS_ESC) {
+      if (addr == BYD_CANADDR_N3_PEDAL_GEAR) {
+        // VCU_0x342 : VCU_Accelerograph_Depth_S 0|8@1+ (%), VCU_Brake_Depth_S 8|8@1+ (%)
+        gas_pressed = (to_push->data[0] != 0U);
+        brake_pressed = (to_push->data[1] != 0U);
+      } else if (addr == BYD_CANADDR_N3_WHEEL_SPEED) {
+        // IPB_0x10C : WheelSpeed_FL 48|12@1+, WheelSpeed_RR 84|12@1+ (x0.06875 km/h)
+        uint16_t speed_fl = (uint16_t)(to_push->data[6] | ((to_push->data[7] & 0x0FU) << 8));
+        uint16_t speed_rr = (uint16_t)(to_push->data[10] | ((to_push->data[11] & 0x0FU) << 8));
+        vehicle_moving = ((speed_fl != 0U) || (speed_rr != 0U));
+        // Vehicle_speed : 35|12@1+ (x0.06875 km/h)
+        uint16_t veh_speed = (uint16_t)(((to_push->data[4] >> 3) | (to_push->data[5] << 5)) & 0xFFFU);
+        UPDATE_VEHICLE_SPEED((float)(veh_speed * 0.06875) * KPH_TO_MS);
+      } else if (addr == BYD_CANADDR_N3_EPS_STEER) {
+        // EPS_0x06D : EPS_SteerWheelAg 77|16@1- (x0.1 deg), EPS_DrvrSteerTq 122|11@1- (x0.02 Nm)
+        int angle_meas_new = (int)(((to_push->data[9] >> 5) | (to_push->data[10] << 3) | (to_push->data[11] << 11)) & 0xFFFFU);
+        angle_meas_new = to_signed(angle_meas_new, 16);
+        update_sample(&angle_meas, angle_meas_new);
+
+        int torque_driver_new = (int)(((to_push->data[15] >> 2) | (to_push->data[16] << 6)) & 0x7FFU);
+        if (torque_driver_new >= 1024) torque_driver_new -= 2048;
+        update_sample(&torque_driver, torque_driver_new);
+      }
+    } else if (bus == BYD_CANBUS_MPC) {
+      if (addr == BYD_CANADDR_ACC_HUD_ADAS) {
+        // ADC_0x32D : ACC_Mode_Display_S 19|3@1+ — same enum semantics as legacy
+        unsigned int accstate = ((to_push->data[2] >> 3) & 0x07U);
+        // 2=standby, 3=active, 5=override
+        acc_main_on = (accstate == 2U) || (accstate == 3U) || (accstate == 5U);
+        bool cruise_engaged = (accstate == 3U) || (accstate == 5U);
+        pcm_cruise_check(cruise_engaged);
       }
     }
   } else if (byd_platform == ANGLE_GENERIC) {
@@ -313,6 +367,28 @@ static bool byd_tx_hook(const CANPacket_t *to_send) {
       byd_steering = true;
       byd_last_steer_tx = microsecond_timer_get();
     }
+  } else if (byd_platform == N3) {
+    // 0x1E2 angle command: same bit layout as the generic port (angle @24 signed,
+    // enable = bit 21 of ADC_AngleReq_St_S 'Active').
+    if ((bus == BYD_CANBUS_ESC) && (addr == BYD_CANADDR_GEN_STEERING_MODULE_ADAS)) {
+      int desired_angle = (int)GET_BYTES_LE(to_send, 3, 2);  // ADC_AngleReq_S : 24|16@1-
+      desired_angle = to_signed(desired_angle, 16);
+      bool steer_control_enabled = GET_BIT(to_send, 21U) != 0U;
+
+      if (steer_angle_cmd_checks(desired_angle, steer_control_enabled, BYD_ATTO3_GENERAL_STEERING_LIMITS)) {
+        tx = false;
+      }
+    }
+
+    if (tx && (bus == BYD_CANBUS_ESC)) {
+      if (addr == BYD_CANADDR_GEN_STEERING_MODULE_ADAS) {
+        byd_steering = true;
+        byd_last_steer_tx = microsecond_timer_get();
+      } else if (addr == BYD_CANADDR_ACC_CMD) {
+        byd_acc_cmd_owned = true;
+        byd_last_acc_tx = microsecond_timer_get();
+      }
+    }
   } else {
     if ((bus == BYD_CANBUS_ESC) && (addr == BYD_CANADDR_ACC_MPC_STATE)) {
       int desired_torque = ((to_send->data[3] & 0x07U) << 8U) | to_send->data[2];
@@ -365,6 +441,22 @@ static bool byd_fwd_hook(int bus, int addr) {
         block_msg = byd_steering;
       }
     }
+  } else if (byd_platform == N3) {
+    // Block the camera's 0x1E2 steering and 0x32E ACC commands on the ADAS bus
+    // while openpilot owns them, with takeover timeout to hand back on exit.
+    if (bus == BYD_CANBUS_MPC) {
+      if (addr == BYD_CANADDR_GEN_STEERING_MODULE_ADAS) {
+        if (byd_takeover_expired(byd_steering, byd_last_steer_tx)) {
+          byd_steering = false;
+        }
+        block_msg = byd_steering;
+      } else if (addr == BYD_CANADDR_ACC_CMD) {
+        if (byd_takeover_expired(byd_acc_cmd_owned, byd_last_acc_tx)) {
+          byd_acc_cmd_owned = false;
+        }
+        block_msg = byd_acc_cmd_owned;
+      }
+    }
   } else {
     const bool is_lkas = ((addr == BYD_CANADDR_ACC_MPC_STATE) || (addr == BYD_CANADDR_ACC_CMD));
     const bool is_eps = (addr == BYD_CANADDR_ACC_EPS_STATE);
@@ -386,6 +478,23 @@ static safety_config byd_init(uint16_t param) {
   const uint32_t FLAG_YUAN_PLUS_DMI_ATTO3 = 0x10U;
   const uint32_t FLAG_ATTO3_GENERAL = 0x20U;
   const uint32_t FLAG_ANGLE_MODE = 0x100U;
+  const uint32_t FLAG_N3 = 0x800U;
+
+  // N3: checksum algorithm not yet verified on a real car, so RX checksum
+  // validation is opt-out; counters are validated (0x1E2/0x32D @52|4, 0x32E @48|4).
+  static RxCheck byd_n3_rx_checks[] = {
+    {.msg = {{BYD_CANADDR_N3_EPS_STEER,    BYD_CANBUS_ESC, 64, 10U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
+    {.msg = {{BYD_CANADDR_N3_WHEEL_SPEED,  BYD_CANBUS_ESC, 64, 10U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
+    {.msg = {{BYD_CANADDR_N3_PEDAL_GEAR,   BYD_CANBUS_ESC,  8, 50U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
+    {.msg = {{BYD_CANADDR_PCM_BUTTONS,     BYD_CANBUS_ESC,  8, 50U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
+    {.msg = {{BYD_CANADDR_ACC_HUD_ADAS,    BYD_CANBUS_MPC,  8, 20U, .max_counter = 15U, .ignore_checksum = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
+    {.msg = {{BYD_CANADDR_GEN_STEERING_MODULE_ADAS, BYD_CANBUS_MPC, 8, 20U, .max_counter = 15U, .ignore_checksum = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
+  };
+
+  static const CanMsg BYD_N3_TX_MSGS[] = {
+    {BYD_CANADDR_GEN_STEERING_MODULE_ADAS, BYD_CANBUS_ESC, 8, .check_relay = true, .disable_static_blocking = true},
+    {BYD_CANADDR_ACC_CMD,                  BYD_CANBUS_ESC, 8, .check_relay = false, .disable_static_blocking = false},
+  };
 
   static const CanMsg BYD_ANGLE_GENERIC_TX_MSGS[] = {
     {BYD_CANADDR_STEERING_MODULE_ADAS, BYD_CANBUS_ESC, 8, .check_relay = true, .disable_static_blocking = true},
@@ -449,8 +558,12 @@ static safety_config byd_init(uint16_t param) {
   bool use_yuan = GET_FLAG(param, FLAG_YUAN_PLUS_DMI_ATTO3);
   bool use_atto3_general = GET_FLAG(param, FLAG_ATTO3_GENERAL);
   bool use_angle_mode = GET_FLAG(param, FLAG_ANGLE_MODE);
+  bool use_n3 = GET_FLAG(param, FLAG_N3);
 
-  if(use_atto3_general) {
+  if(use_n3) {
+    byd_platform = N3;
+    ret = BUILD_SAFETY_CFG(byd_n3_rx_checks, BYD_N3_TX_MSGS);
+  } else if(use_atto3_general) {
     // ATTO3 has its own byd_general.dbc port; check before ANGLE_MODE since
     // interface.py also sets ANGLE_MODE for it.
     byd_platform = ATTO3_GENERAL;

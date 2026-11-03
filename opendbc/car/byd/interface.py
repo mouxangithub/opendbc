@@ -11,7 +11,7 @@ from opendbc.car.byd.radar_interface import RadarInterface
 from opendbc.car.byd.tuning import Tuning
 from opendbc.car.byd.values import (
   BydFlags, BydSafetyFlags, CAR, CanBus, EXP_LONG_CAR, PLATFORM_ATTO3_GENERAL,
-  PLATFORM_QIN_SEAL06, PLATFORM_SEAL, PLATFORM_TENGSHI, PT_RADAR_CAR, RADAR_CAR, TORQUE_LAT_CAR,
+  PLATFORM_N3, PLATFORM_QIN_SEAL06, PLATFORM_SEAL, PLATFORM_TENGSHI, PT_RADAR_CAR, RADAR_CAR, TORQUE_LAT_CAR,
 )
 
 ButtonType = structs.CarState.ButtonEvent.Type
@@ -74,6 +74,27 @@ class CarInterface(CarInterfaceBase):
 
     ret.deprecated.enableBsm = 0x418 in fingerprint[CanBus.ESC]
     ret.transmissionType = TransmissionType.direct
+
+    if candidate in PLATFORM_N3:
+      # N3 (SA6/N3A1, CAN FD): angle control via 0x1E2, longitudinal via 0x32E.
+      # MRR object list is on the radar bus.
+      ret.safetyConfigs[valid_safety_index].safetyParam |= BydSafetyFlags.N3.value
+      ret.safetyConfigs[valid_safety_index].safetyParam |= BydSafetyFlags.ANGLE_MODE.value
+      ret.radarUnavailable = False
+      ret.steerControlType = structs.CarParams.SteerControlType.angle
+      ret.flags |= BydFlags.ANGLE_CONTROL.value
+      ret.openpilotLongitudinalControl = True
+      ret.pcmCruise = True
+      ret.minEnableSpeed = -1.
+      ret.minSteerSpeed = 0.
+      ret.autoResumeSng = True
+      ret.stopAccel = -0.3
+      ret.longitudinalActuatorDelay = 0.5
+      ret.steerActuatorDelay = 0.1
+      ret.steerLimitTimer = 0.5
+      ret.longitudinalTuning.kiBP = [0.]
+      ret.longitudinalTuning.kiV = [1.0]
+      return ret
 
     # --- safety flags (platform flag in low bits, control-mode flags in high bits) ---
     if candidate in PLATFORM_ATTO3_GENERAL:

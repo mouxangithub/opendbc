@@ -8,8 +8,8 @@ from opendbc.car.lateral import AngleSteeringLimits, apply_driver_steer_torque_l
 from opendbc.car.byd import bydcan
 from opendbc.car.byd.byd_params import BydParams
 from opendbc.car.byd.values import (
-  BydFlags, CarControllerParams, PLATFORM_ATTO3_GENERAL, PLATFORM_QIN_SEAL06,
-  PLATFORM_SONG_PLUS_DMI, TORQUE_LAT_CAR,
+  BydFlags, CarControllerParams, PLATFORM_ATTO3_GENERAL, PLATFORM_N3,
+  PLATFORM_QIN_SEAL06, PLATFORM_SONG_PLUS_DMI, TORQUE_LAT_CAR,
 )
 
 LongCtrlState = structs.CarControl.Actuators.LongControlState
@@ -74,6 +74,7 @@ class CarController(CarControllerBase):
     self.CP = CP
     self.param_s = BydParams()
     self.is_atto3_general = CP.carFingerprint in PLATFORM_ATTO3_GENERAL
+    self.is_n3 = CP.carFingerprint in PLATFORM_N3
 
     self.modified_stock_long = self.param_s.get_bool("BydModifiedStockLong")
     self.auto_gas_sync_speed = self.param_s.get_bool("AutoGasSyncSpeed")
@@ -487,7 +488,52 @@ class CarController(CarControllerBase):
     self.frame += 1
     return new_actuators, can_sends
 
+  # --------------------------------------------------------------------------
+  # N3 platform (byd_n3_pt.dbc): angle via 0x1E2, longitudinal via 0x32E
+  # --------------------------------------------------------------------------
+  def _update_n3(self, CC, CC_SP, CS, now_nanos):
+    actuators = CC.actuators
+    pcm_cancel_cmd = CC.cruiseControl.cancel
+    can_sends = []
+
+    lat_active = CC.latActive
+    long_active = CC.longActive
+
+    new_actuators = actuators.as_builder()
+    apply_accel = float(np.clip(actuators.accel, CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX))
+    self.byd_jerk.make_jerk(CS, apply_accel, actuators)
+
+    if self.frame % STEER_STEP == 0:
+      requested_angle = actuators.steeringAngleDeg
+      requested_angle = apply_std_steer_angle_limits(requested_angle, self.apply_angle_last, CS.out.vEgoRaw,
+                                                     CS.out.steeringAngleDeg, lat_active, self.angle_limits)
+      if not lat_active:
+        requested_angle = CS.out.steeringAngleDeg
+      self.apply_angle_last = requested_angle
+      new_actuators.steeringAngleDeg = requested_angle
+
+      can_sends.append(bydcan.n3_angle_control(
+        self.packer, self.CP, requested_angle, self.LateralAngleTorqMax,
+        lat_active, self.lkas_req_prepare, self.mpc_lkas_counter,
+      ))
+      self.mpc_lkas_counter = (self.mpc_lkas_counter + 1) % 16
+
+    if self.frame % ACC_STEP == 0:
+      can_sends.append(bydcan.n3_acc_cmd(
+        self.packer, self.CP, apply_accel, self.byd_jerk,
+        self.rfss, self.sss, long_active,
+        3 if long_active else 0, self.mpc_acc_counter, pcm_cancel_cmd,
+      ))
+      self.mpc_acc_counter = (self.mpc_acc_counter + 1) % 16
+
+    new_actuators.accel = apply_accel
+    self.apply_accel_last = apply_accel
+    self.frame += 1
+    return new_actuators, can_sends
+
   def update(self, CC, CC_SP, CS, now_nanos):
     if self.is_atto3_general:
       return self._update_atto3(CC, CC_SP, CS, now_nanos)
+    if self.is_n3:
+      return self._update_n3(CC, CC_SP, CS, now_nanos)
     return self._update_generic(CC, CC_SP, CS, now_nanos)
