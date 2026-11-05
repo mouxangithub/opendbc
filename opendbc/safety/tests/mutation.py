@@ -13,8 +13,9 @@ from collections import Counter, namedtuple
 from dataclasses import dataclass
 from pathlib import Path
 
-import tree_sitter_c as ts_c
-import tree_sitter as ts
+# NOTE: tree_sitter / tree_sitter_c are imported lazily inside enumerate_sites()
+# so this module stays importable (and its pure-python helpers testable) on
+# hosts without the parser wheels.
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -150,6 +151,9 @@ def _prepare_for_parsing(txt):
 
 
 def enumerate_sites(input_source, preprocessed_file):
+  import tree_sitter_c as ts_c
+  import tree_sitter as ts
+
   subprocess.run([
     "cc", "-E", "-std=gnu11", "-nostdlib", "-fno-builtin", "-DALLOW_DEBUG",
     f"-I{ROOT}", f"-I{ROOT / 'opendbc/safety/board'}",
