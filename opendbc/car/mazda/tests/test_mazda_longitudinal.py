@@ -176,7 +176,7 @@ def test_command_slew_is_rate_limited(cc, cs):
   assert cc.accel_last == pytest.approx(-2.0, rel=1e-6, abs=1e-12)
 
   # plan jumps straight to +1.0: the command must ramp, not step; brake release at the windup
-  # limit, then the positive part at stock's rolling build rate
+  # limit, then the positive part at the town build rate
   prev = cc.accel_last
   for _ in range(5):
     step_long(cc, cs, accel=1.0, cruise_engaged=True, v_ego=10.)
@@ -187,7 +187,7 @@ def test_command_slew_is_rate_limited(cc, cs):
   prev = cc.accel_last
   for _ in range(5):
     step_long(cc, cs, accel=1.0, cruise_engaged=True, v_ego=10.)
-    assert cc.accel_last - prev == pytest.approx(0.8 * DT_CTRL, abs=1e-6)
+    assert cc.accel_last - prev == pytest.approx(CarControllerParams.ACCEL_BUILD_V[0] * DT_CTRL, abs=1e-6)
     prev = cc.accel_last
 
   # and the other way, at the looser winddown limit
@@ -200,13 +200,13 @@ def test_command_slew_is_rate_limited(cc, cs):
     prev = cc.accel_last
 
 
-def test_build_rate_follows_stock_by_speed(cc, cs):
-  """Stock pulls away from a stop at its 1.22 m/s3 release ramp (+25 raw per 50 Hz frame) and builds
-  accel at 0.59 m/s3 once rolling (+12 raw per frame, 99.3% of rising stock frames across 158 routes); in
-  town it is deliberately a third quicker here, at highway speed stock's own. The build rate
-  governs the positive region only; brake release below zero keeps the windup limit."""
-  ramp = CarControllerParams.ACCEL_RELEASE_RAMP
-  for v_ego, jerk in ((0., ramp), (3., ramp), (4.5, (ramp + 0.8) / 2), (6., 0.8), (12., 0.8), (16., 0.7), (20., 0.6),
+def test_build_rate_by_speed(cc, cs):
+  """In town the positive command builds at 3.0 m/s3, inside the 3-4 m/s3 other ports send. From
+  16 m/s it follows stock MRCC (0.59 m/s3 once rolling, +12 raw per 50 Hz frame, 99.3% of rising stock
+  frames across 158 routes) to hold the gear. The build rate governs the positive region only; brake
+  release below zero keeps the windup limit."""
+  town = CarControllerParams.ACCEL_BUILD_V[0]
+  for v_ego, jerk in ((0., town), (6., town), (12., town), (14., (town + 0.8) / 2), (16., 0.8), (18., 0.7), (20., 0.6),
                       (30., 0.6)):
     cc.accel_last = 0.
     step_long(cc, cs, accel=2.0, cruise_engaged=True, v_ego=v_ego)
@@ -231,10 +231,11 @@ def test_throttle_lift_follows_stock_but_braking_does_not_wait(cc, cs):
   assert cc.accel_last - prev == pytest.approx(CarControllerParams.ACCEL_WINDDOWN_LIMIT, abs=1e-6)
 
 
-def test_ceiling_follows_stock_by_speed(cc, cs):
-  """The wire never asks for more than stock's own accelerating command at that speed."""
-  assert max(CarControllerParams.ACCEL_CEILING_V) <= CarControllerParams.ACCEL_MAX
-  for v_ego, ceiling in ((4., 1.75), (14., 0.95), (25., 0.65), (35., 0.65)):
+def test_ceiling_by_speed(cc, cs):
+  """In town the wire may ask for the panda's 2.0; from 14 m/s never more than stock's own
+  accelerating command at that speed."""
+  top = CarControllerParams.ACCEL_MAX
+  for v_ego, ceiling in ((4., top), (11., top), (12.5, (top + 0.95) / 2), (14., 0.95), (25., 0.65), (35., 0.65)):
     cc.accel_last = 2.0
     for _ in range(seconds(1.0)):  # settles through the lift limit
       step_long(cc, cs, accel=2.0, cruise_engaged=True, v_ego=v_ego)
