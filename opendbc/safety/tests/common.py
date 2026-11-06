@@ -38,6 +38,12 @@ def round_speed(v):
   return round(v * VEHICLE_SPEED_FACTOR) / VEHICLE_SPEED_FACTOR
 
 
+def speeds_within_delta(speed, speed_2):
+  # safety compares the speeds in integer VEHICLE_SPEED_FACTOR units
+  delta = away_round(speed * VEHICLE_SPEED_FACTOR) - away_round(speed_2 * VEHICLE_SPEED_FACTOR)
+  return abs(delta) <= MAX_SPEED_DELTA * VEHICLE_SPEED_FACTOR
+
+
 def make_msg(bus, addr, length=8, dat=None):
   if dat is None:
     dat = b'\x00' * length
@@ -1008,6 +1014,8 @@ class SafetyTest(SafetyTestBase):
             # overlapping TX addrs, but they're not actuating messages for either car
             if attr == 'TestHyundaiCanfdLKASteeringLongEV' and current_test.startswith('TestToyota'):
               tx = list(filter(lambda m: m[0] not in [0x160, ], tx))
+            if attr.startswith('TestHyundaiCanfdLFASteeringCCNC') and current_test.startswith('TestSubaruPreglobal'):
+              tx = list(filter(lambda m: m[0] not in [0x161, ], tx))
 
             # Volkswagen MQB longitudinal actuating message overlaps with the Subaru lateral actuating message
             if attr == 'TestVolkswagenMqbLongSafety' and current_test.startswith('TestSubaru'):
@@ -1217,7 +1225,7 @@ class CarSafetyTest(SafetyTest, MadsSafetyTestBase, RxChecksSafetyTestBase):
         self.safety.set_controls_allowed(True)
         self._rx(self._speed_msg_2(speed_2))
 
-        within_delta = abs(speed - speed_2) <= MAX_SPEED_DELTA
+        within_delta = speeds_within_delta(speed, speed_2)
         self.assertEqual(self.safety.get_controls_allowed(), within_delta)
 
   def test_safety_tick(self):
