@@ -384,7 +384,7 @@ static safety_config mazda_init(uint16_t param) {
   };
 
   // CRZ_CTRL intentionally disappears after radar teardown.
-  static RxCheck mazda_long_rx_checks[] = {
+  static const RxCheck mazda_long_rx_checks[] = {
     {.msg = {{MAZDA_CRZ_BTNS,     0, 8, 10U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
     {.msg = {{MAZDA_STEER_TORQUE, 0, 8, 83U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
     {.msg = {{MAZDA_ENGINE_DATA,  0, 8, 100U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
