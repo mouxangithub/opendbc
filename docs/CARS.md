@@ -215,6 +215,7 @@
 |Hyundai|Sonata 2018-19|Smart Cruise Control (SCC)|[Upstream](#upstream)|
 |Hyundai|Sonata 2020-23|All|[Upstream](#upstream)|
 |Hyundai|Sonata Hybrid 2020-23|All|[Upstream](#upstream)|
+|Hyundai|Sonata Hybrid (without HDA II) 2024-26|Smart Cruise Control (SCC)|[Upstream](#upstream)|
 |Hyundai|Staria 2023|All|[Upstream](#upstream)|
 |Hyundai|Tucson 2021|Smart Cruise Control (SCC)|[Upstream](#upstream)|
 |Hyundai|Tucson 2022|Smart Cruise Control (SCC)|[Upstream](#upstream)|

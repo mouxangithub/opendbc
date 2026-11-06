@@ -490,7 +490,7 @@ static safety_config byd_init(uint16_t param) {
 
   // N3: checksum algorithm not yet verified on a real car, so RX checksum
   // validation is opt-out; counters are validated (0x1E2/0x32D @52|4, 0x32E @48|4).
-  static RxCheck byd_n3_rx_checks[] = {
+  static const RxCheck byd_n3_rx_checks[] = {
     {.msg = {{BYD_CANADDR_N3_EPS_STEER,    BYD_CANBUS_ESC, 64, 10U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
     {.msg = {{BYD_CANADDR_N3_WHEEL_SPEED,  BYD_CANBUS_ESC, 64, 10U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
     {.msg = {{BYD_CANADDR_N3_PEDAL_GEAR,   BYD_CANBUS_ESC,  8, 50U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
@@ -514,7 +514,7 @@ static safety_config byd_init(uint16_t param) {
   // Generic angle platforms use byd_generic_pt.dbc. The 0x11F steering-angle
   // frame has an 8-bit counter at byte 4 but no checksum, so counter/checksum
   // validation is deliberately disabled for that frame.
-  static RxCheck byd_angle_generic_rx_checks[] = {
+  static const RxCheck byd_angle_generic_rx_checks[] = {
     {.msg = {{BYD_CANADDR_STEERING_TORQUE, BYD_CANBUS_ESC, 8, 50U, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},
     {.msg = {{BYD_CANADDR_STEER_MODULE_2,  BYD_CANBUS_ESC, 5, 100U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
     {.msg = {{BYD_CANADDR_CARSPEED,         BYD_CANBUS_ESC, 8, 50U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
@@ -540,14 +540,14 @@ static safety_config byd_init(uint16_t param) {
   // safety_hooks `get_checksum` / `compute_checksum` / `get_counter` callbacks are
   // registered — that way the safety framework validates every received frame. Frames
   // that don't have a checksum/counter in the DBC are explicitly opt-out below.
-  static RxCheck byd_han_dmev_rx_checks[] = {
+  static const RxCheck byd_han_dmev_rx_checks[] = {
     {.msg = {{BYD_CANADDR_ACC_EPS_STATE,    BYD_CANBUS_ESC, 8, 50U, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},
     {.msg = {{BYD_CANADDR_CARSPEED,         BYD_CANBUS_ESC, 8, 50U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
     {.msg = {{BYD_CANADDR_DRIVE_STATE,      BYD_CANBUS_ESC, 8, 50U, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},
     {.msg = {{BYD_CANADDR_ACC_HUD_ADAS,     BYD_CANBUS_MPC, 8, 50U, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},
   };
 
-  static RxCheck byd_atto3_general_rx_checks[] = {
+  static const RxCheck byd_atto3_general_rx_checks[] = {
     {.msg = {{BYD_CANADDR_STEERING_TORQUE,  BYD_CANBUS_ESC, 8, 100U, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},
     {.msg = {{BYD_CANADDR_STEER_MODULE_2,   BYD_CANBUS_ESC, 8, 100U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
     {.msg = {{BYD_CANADDR_WHEEL_SPEED,      BYD_CANBUS_ESC, 8,  50U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},
