@@ -15,6 +15,13 @@ RESUME_UNLATCH_LATCHED_FRAMES = int(0.18 / DT_CTRL)
 RESUME_REPULSE_FRAMES = int(1.0 / DT_CTRL)
 # Debounce movement requests before releasing a standstill hold.
 RELEASE_DEBOUNCE_FRAMES = int(0.2 / DT_CTRL)
+# A plan above RELEASE_FIRM_ACCEL is a firm request to move and fills the debounce in
+# RELEASE_FIRM_FRAMES instead. Of 26
+# standstill blips across 683 alpha-long segments, all but one peaked at or under 0.25; that one
+# (0.47) lasted 1.4 s and the debounce releases it anyway. Real launches ramp through 0.3 at a
+# median 0.3 s, so this mainly speeds step requests.
+RELEASE_FIRM_ACCEL = 0.3  # m/s^2
+RELEASE_FIRM_FRAMES = int(0.05 / DT_CTRL)
 # Arriving at a stop, the e2e plan drifts up to +0.11 for up to 0.4 s before its shouldStop lands,
 # always starting within 0.2 s of standstill. For RELEASE_SETTLE_FRAMES of standstill a hold opens
 # only above RELEASE_ACCEL; after that any sustained positive plan is a request to move, since a
@@ -79,10 +86,14 @@ class StandstillHold:
     was_holding = self.holding
     self.standstill_frames = self.standstill_frames + 1 if standstill else 0
     # Debounce plan movement requests: opening a hold just after arriving takes RELEASE_ACCEL,
-    # otherwise any positive plan. Driver throttle releases the hold immediately.
+    # otherwise any positive plan. A firm plan fills the debounce faster, except inside a running
+    # pulse, where the full debounce outlasts the pulse so a second release cannot fire within it.
+    # Driver throttle releases the hold immediately.
     settling = self.standstill_frames <= RELEASE_SETTLE_FRAMES
     release_accel = RELEASE_ACCEL if was_holding and settling else 0.
-    self.release_frames = self.release_frames + 1 if plan_accel > release_accel else 0
+    firm = plan_accel > RELEASE_FIRM_ACCEL and self.unlatch_frames == 0
+    step = RELEASE_DEBOUNCE_FRAMES // RELEASE_FIRM_FRAMES if firm else 1
+    self.release_frames = self.release_frames + step if plan_accel > release_accel else 0
     plan_wants_go = self.release_frames >= RELEASE_DEBOUNCE_FRAMES
     # Keep STOPPING off once the plan or driver requests acceleration.
     release = gas_pressed or plan_wants_go
@@ -131,8 +142,8 @@ class AccelShaper:
   """The CRZ_INFO command between the plan and the wire, shaped like stock MRCC's.
 
   A hold's release ramps up from the relaxed command, with a bounded breakaway while the car is
-  still stopped. Otherwise the plan is slew-limited, and positive commands follow stock's
-  ceiling and build rate at this speed and lift at stock's rate. The standstill hold's own
+  still stopped. Otherwise the plan is slew-limited, and positive commands are capped by a
+  ceiling and build rate keyed on speed and lift at stock's rate. The standstill hold's own
   commands come last. accel_last is the command sent the frame before.
   """
 
@@ -180,7 +191,7 @@ class AccelShaper:
         accel = rate_limit(accel, accel_last, CarControllerParams.ACCEL_WINDDOWN_LIMIT,
                            CarControllerParams.ACCEL_WINDUP_LIMIT)
         if accel > 0.:
-          # Shape positive commands to stock MRCC's ceiling and build rate at this speed.
+          # Cap positive commands by speed: ceiling and build rate.
           ceiling = float(np.interp(v_ego, CarControllerParams.ACCEL_CEILING_BP, CarControllerParams.ACCEL_CEILING_V))
           build = float(np.interp(v_ego, CarControllerParams.ACCEL_BUILD_BP, CarControllerParams.ACCEL_BUILD_V)) * DT_CTRL
           accel = min(accel, ceiling, max(accel_last, 0.) + build)
