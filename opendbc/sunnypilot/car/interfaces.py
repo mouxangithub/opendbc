@@ -107,6 +107,13 @@ def has_bsm(CP: structs.CarParams, CP_SP: structs.CarParamsSP | None) -> bool:
   return CP.brand in BSM_FLAGS and bool(CP.flags & BSM_FLAGS[CP.brand])
 
 
+def has_speed_limit(CP: structs.CarParams, CP_SP: structs.CarParamsSP | None) -> bool:
+  """Whether carstate_ext fills CarStateSP.speedLimit (the limit the car shows)."""
+  if CP.brand == "hyundai":
+    return CP_SP is not None and bool(CP_SP.flags & (HyundaiFlagsSP.SPEED_LIMIT_AVAILABLE | HyundaiFlagsSP.HAS_LKAS12))
+  return CP.brand in ("mazda", "tesla", "toyota")
+
+
 def setup_interfaces(CI, CP: structs.CarParams, CP_SP: structs.CarParamsSP,
                      params_list: list[dict[str, str]] | None = None,
                      can_recv: CanRecvCallable | None = None, can_send: CanSendCallable | None = None) -> None:
